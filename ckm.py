@@ -4,6 +4,7 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.kernel_approximation import RBFSampler, Nystroem
 from sklearn import cross_validation
 from sklearn import metrics
+from skimage.measure import block_reduce
 
 import numpy as np
 from numpy import ndarray
@@ -29,22 +30,40 @@ def _load_mnist(small=True):
 def load_data(dataset="mnist_small"):
     return _load_mnist()
 
+def msg(message, delim=False):
+    if (delim):
+        print(DELIM)
+    print(message)
+
 def apply_patch_rbf(X, patch_shape, rbf):
-    print(DELIM)
-    print("Applying Patch RBF")
-    print("X Input Shape: {0}".format(X.shape))
+
+    msg("Applying Patch RBF", True)
+    msg("X Input Shape: {0}".format(X.shape))
     patches  = patchify(X, patch_shape)
 
-    print("Patch Shape: {0}".format(patches.shape))
-    print patches[0,0].shape
+    msg("Patch Shape: {0}".format(patches.shape))
     X_lift = np.zeros((X.shape[0], X.shape[1], rbf.n_components))
     for n in range(X.shape[0]):
         for i in range(64):
             X_lift[n,i] = rbf.transform(flatten(patches[n, i]))
     X_lift = X_lift.reshape(X_lift.shape[0], X_lift.shape[1]*X_lift.shape[2])
-    print("X Output Shape: {0}".format(X_lift.shape))
+    msg("X Output Shape: {0}".format(X_lift.shape))
     return X_lift
 
+def pool(x, pool_size, imsize, func=np.sum):
+    x = x.reshape(imsize)
+    x_pool = block_reduce(x, block_size=  pool_size + (1,), func=func)
+    return flatten(x_pool)
+
+
+
+
+
+def get_model_acc(clf, X, y, r_state=RANDOM_STATE):
+    X_train, X_test, y_train, y_test = cross_validation.train_test_split(X, y, test_size=0.5, random_state=r_state)
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
+    return metrics.accuracy_score(y_test, y_pred)
 
 def patchify(img, patch_shape, pad=True, pad_mode='constant', cval=0):
     ''' Function borrowed from:
@@ -65,44 +84,31 @@ def patchify(img, patch_shape, pad=True, pad_mode='constant', cval=0):
     patches = np.lib.stride_tricks.as_strided(img, shape=shape, strides=strides)
     return patches
 if __name__ == "__main__":
+    msg("Start Data Load", True)
     X, y = load_data()
-    print(DELIM)
-    print("Data load complete")
-    X_train, X_test, y_train, y_test = cross_validation.train_test_split(X, y, test_size=0.5, random_state=0)
+    msg("Data load complete")
+
+    msg("Start linear model train", True)
     clf = SGDClassifier(loss="hinge", random_state=RANDOM_STATE)
-    clf.fit(X_train, y_train)
-    print(DELIM)
-    print("Linear Classifier Training complete")
-    y_pred = clf.predict(X_test)
-    acc = metrics.accuracy_score(y_test, y_pred)
-    print(DELIM)
-    print("Linear Classifier Test accuracy: {0}".format(acc))
-    print(DELIM)
+    msg("Linear Classifier Validation accuracy: {0}".format(get_model_acc(clf, X, y)))
+
+
+    msg("Start Random RBF model train", True)
     rbf_feature = RBFSampler(gamma=0.001, random_state=RANDOM_STATE, n_components=5000).fit(X)
-    clf2 = SGDClassifier(loss="hinge", random_state=RANDOM_STATE)
-    clf2.fit(rbf_feature.transform(X_train), y_train)
-    print("Random RBF Classifier Training complete")
-    y_pred2 = clf2.predict(rbf_feature.transform(X_test))
-    acc2 = metrics.accuracy_score(y_test, y_pred2)
-    print(DELIM)
-    print("Random RBF Classifier Test accuracy: {0}".format(acc2))
-    print(DELIM)
-    print("APPLY PATCH RBF")
+    X_lift = rbf_feature.transform(X)
+    msg("Random RBF Classifier Validation accuracy: {0}".format(get_model_acc(clf, X_lift, y)))
+
+
+    msg("Start Random Patch RBF train", True)
     patch_shape = (5,5)
-    patch_rbf = RBFSampler(gamma=0.001, random_state=RANDOM_STATE, n_components=100).fit(np.zeros(patch_shape[0]*patch_shape[1]))
-    X_train_lift = apply_patch_rbf(X_train, patch_shape, patch_rbf)
-    print(DELIM)
-    print("PATCH RBF COMPLETE")
+    patch_rbf = RBFSampler(gamma=0.001, random_state=RANDOM_STATE, n_components=5000).fit(np.zeros(patch_shape[0]*patch_shape[1]))
+    X_patch_lift = apply_patch_rbf(X, patch_shape, patch_rbf)
 
-    clf3 = SGDClassifier(loss="hinge", random_state=RANDOM_STATE)
-    clf3.fit(X_train_lift, y_train)
-    print("Patch RBF Classifier Training complete")
-    y_pred3 = clf3.predict(apply_patch_rbf(X_test, patch_shape, patch_rbf))
-    acc3 = metrics.accuracy_score(y_test, y_pred3)
-    print(DELIM)
-    print("Patch RBF Classifier Test accuracy: {0}".format(acc3))
+    msg("Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_patch_lift, y)))
+    imsize = (np.sqrt(X.shape[1]), np.sqrt(X.shape[1]), patch_rbf.n_components)
+    X_pooled = np.apply_along_axis(lambda im: pool(im,(2,2), imsize), 1, X_patch_lift)
 
-
+    msg("pooled Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_pooled, y)))
 
 
 
