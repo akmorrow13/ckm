@@ -29,11 +29,16 @@ def _load_mnist(small=True):
         mnist = datasets.load_digits()
     else:
         mnist = fetch_mldata('MNIST original', data_home="/Users/vaishaal/research/ckm")
+        mnist.data = mnist.data/255.0
 
     return mnist.data, mnist.target
 
 def load_data(dataset="mnist_small"):
-    return _load_mnist()
+    if (dataset == "mnist_small"):
+        data = _load_mnist(True)
+    elif dataset == "mnist_full":
+        data = _load_mnist(False)
+    return data
 
 def msg(message, delim=False):
     if (delim):
@@ -45,15 +50,21 @@ def apply_patch_rbf(X,imsize, patch_shape, rbf):
     msg("Applying Patch RBF", True)
     msg("X Input Shape: {0}".format(X.shape))
     patches  = patchify(X, patch_shape)
-
+    new_shape = patches.shape[:-3] + (patches.shape[-3]*patches.shape[-1]*patches.shape[-2],)
+    print "OLD SHAPE", patches.shape
+    print "NEW SHAPE", new_shape
+    patches = patches.reshape(new_shape)
     msg("Patch Shape: {0}".format(patches.shape))
     X_lift = np.zeros((X.shape[0], X.shape[1], rbf.n_components))
+    k = 0
+    w = rbf.random_weights_[np.newaxis, np.newaxis,:,:]
+    print "W shape", w.shape
+
     for n in range(X.shape[0]):
-        for i in range(imsize):
-            flat_patch = flatten(patches[n, i])
-            flat_patch_norm = max(np.linalg.norm(flat_patch), 0.001)
-            flat_patch_normalized = flat_patch/flat_patch_norm
-            X_lift[n,i] = flat_patch_norm*rbf.transform(flat_patch_normalized)
+        image_patches = patches[n, :]
+        flat_patch_norm = np.maximum(np.linalg.norm(image_patches, axis=1), 0.001)[:,np.newaxis]
+        flat_patch_normalized = image_patches/flat_patch_norm
+        X_lift[n] = flat_patch_norm*rbf.transform(flat_patch_normalized)
 
     X_lift = X_lift.reshape(X_lift.shape[0], X_lift.shape[1]*X_lift.shape[2])
     # Contrast normalization
@@ -69,7 +80,7 @@ def pool(x, pool_size, imsize, func=np.average):
 
 def gaussian_pool(x, pool_size, imsize):
     x = x.reshape(imsize)
-    gauss = signal.gaussian(9, 2/np.sqrt(2))
+    gauss = signal.gaussian(6, 1/np.sqrt(np.sqrt(2)))
     kernel = np.outer(gauss, gauss)
     x_out =  x.copy()
     for i in range(x_out.shape[2]):
@@ -78,7 +89,7 @@ def gaussian_pool(x, pool_size, imsize):
 
 
 def get_model_acc(clf, X, y, r_state=RANDOM_STATE):
-    X_train, X_test, y_train, y_test = cross_validation.train_test_split(X, y, test_size=0.5, random_state=r_state)
+    X_train, X_test, y_train, y_test = cross_validation.train_test_split(X, y, test_size=1.0/7.0, random_state=r_state)
     clf.fit(X_train, y_train)
     y_pred = clf.predict(X_test)
     return metrics.accuracy_score(y_test, y_pred)
@@ -107,7 +118,7 @@ def patchify(img, patch_shape, pad=True, pad_mode='constant', cval=0):
     return patches
 if __name__ == "__main__":
     msg("Start Data Load", True)
-    X, y = load_data()
+    X, y = load_data("mnist_small")
     msg("Data load complete")
 
     msg("Start linear model train", True)
@@ -117,7 +128,7 @@ if __name__ == "__main__":
 
 
     msg("Start Random RBF model train", True)
-    rbf_feature = RBFSampler(gamma=0.001, random_state=RANDOM_STATE, n_components=500).fit(X)
+    rbf_feature = RBFSampler(gamma=0.0095, random_state=RANDOM_STATE, n_components=500).fit(X)
     X_lift = rbf_feature.transform(X)
     msg("Random RBF Classifier Validation accuracy: {0}".format(get_model_acc(clf, X_lift, y)))
 
@@ -125,18 +136,16 @@ if __name__ == "__main__":
     msg("Start Random Patch RBF train", True)
     patch_shape = (5,5)
     patch_rbf = RBFSampler(gamma=1.7, random_state=RANDOM_STATE, n_components=50).fit(np.zeros(patch_shape[0]*patch_shape[1]))
-    X_patch_lift = apply_patch_rbf(X[:,:,np.newaxis], 64, patch_shape, patch_rbf)
-
+    X_patch_lift = apply_patch_rbf(X[:,:,np.newaxis], X.shape[1], patch_shape, patch_rbf)
     msg("Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_patch_lift, y)))
+
+    '''
     imsize = (np.sqrt(X.shape[1]), np.sqrt(X.shape[1]), patch_rbf.n_components)
     X_pooled = np.apply_along_axis(lambda im: gaussian_pool(im,2, imsize), 1, X_patch_lift)
     msg("pooled Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_pooled, y)))
 
     patch_shape2 = (3,3)
-    patch_rbf2 = RBFSampler(gamma=1, random_state=RANDOM_STATE, n_components=200).fit(np.zeros(patch_shape2[0]*patch_shape2[1]*50))
-    X_patch_layer2 = apply_patch_rbf(X_pooled.reshape(1797, 16, 50), 16, patch_shape2, patch_rbf2)
+    patch_rbf2 = RBFSampler(gamma=1, random_state=RANDOM_STATE, n_components=2000).fit(np.zeros(patch_shape2[0]*patch_shape2[1]*50))
+    X_patch_layer2 = apply_patch_rbf(X_pooled.reshape(1797, 196, 50), 16, patch_shape2, patch_rbf2)
     msg("2 level CKN Classifier Test accuracy: {0}".format(get_model_acc(clf, X_patch_layer2, y)))
-
-
-
-
+    '''
