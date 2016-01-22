@@ -126,11 +126,34 @@ def patchify(img, patch_shape, pad=True, pad_mode='constant', cval=0):
     strides = img.itemsize*np.array([Y*Z, Z, Y*Z, Z, 1])
     patches = np.lib.stride_tricks.as_strided(img, shape=shape, strides=strides)
     return patches
+def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True):
+    patch_rbf = RBFSampler(gamma=gamma, random_state=RANDOM_STATE, n_components=n_components).fit(np.zeros((1,patch_shape[0]*patch_shape[1]*X_train.shape[-1])))
+    patches_train = patchify_all_imgs(X_train, patch_shape)
+    print "Generated train patches"
+    print "Patches_train size", patches_train.shape
+    print "RBF map shape", patch_rbf.random_weights_.shape
+    X_patch_lift_train = apply_patch_rbf(X_train, X_train.shape[1], patches_train, patch_rbf.random_weights_, patch_rbf.random_offset_)
+    print "Lifted train"
+    patches_test = patchify_all_imgs(X_test, patch_shape)
+    print "Generated test patches"
+    X_patch_lift_test = apply_patch_rbf(X_test, X_test.shape[1], patches_test, patch_rbf.random_weights_, patch_rbf.random_offset_)
+    print "Lifted test"
+    msg("Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_patch_lift_train, y_train, X_patch_lift_test, y_test)))
+    print "SHAPE", X_patch_lift_train.shape
+
+    imsize = (np.sqrt(X_train.shape[1]), np.sqrt(X_train.shape[1]), patch_rbf.n_components)
+    if (pool):
+        X_pooled_train = np.apply_along_axis(lambda im: gaussian_pool(im,2, imsize), 1, X_patch_lift_train)
+        X_pooled_test = np.apply_along_axis(lambda im: gaussian_pool(im,2, imsize), 1, X_patch_lift_test)
+        return X_pooled_train, X_pooled_test
+    else:
+        return X_patch_lift_train, X_patch_lift_test
+
 if __name__ == "__main__":
     msg("Start Data Load", True)
     (X_train, y_train), (X_test, y_test) = load_data("mnist_full")
     msg("Data load complete")
-    '''
+
     msg("Start linear model train", True)
     clf = SGDClassifier(loss="hinge", random_state=RANDOM_STATE)
     np.lib.stride_tricks
@@ -141,31 +164,22 @@ if __name__ == "__main__":
     X_train_lift = rbf_feature.transform(X_train)
     X_test_lift = rbf_feature.transform(X_test)
     msg("Random RBF Classifier Validation accuracy: {0}".format(get_model_acc(clf, X_train_lift, y_train, X_test_lift, y_test)))
-    '''
 
-    clf = SGDClassifier(loss="hinge", random_state=RANDOM_STATE)
+    clf = SGDClassifier(loss="hinge", alpha=0.002, random_state=RANDOM_STATE)
     msg("Start Random Patch RBF train", True)
     patch_shape = (5,5)
-    patch_rbf = RBFSampler(gamma=1.7, random_state=RANDOM_STATE, n_components=50).fit(np.zeros((1,patch_shape[0]*patch_shape[1])))
+    patch_shape_2 = (3,3)
+
     X_train = X_train[:,:,np.newaxis]
     X_test = X_test[:,:,np.newaxis]
-    patches_train = patchify_all_imgs(X_train, patch_shape)
-    print "Generated train patches"
-    X_patch_lift_train = apply_patch_rbf(X_train, X_train.shape[1], patches_train, patch_rbf.random_weights_, patch_rbf.random_offset_)
-    print "Lifted train"
 
-    patches_test = patchify_all_imgs(X_test, patch_shape)
-    print "Generated test patches"
-    X_patch_lift_test = apply_patch_rbf(X_test, X_test.shape[1], patches_test, patch_rbf.random_weights_, patch_rbf.random_offset_)
-    print "Lifted test"
+    X_train_l1, X_test_l1 = ckm_apply(X_train, X_test, patch_shape, 2, 50, True)
+    msg("Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l1, y_train, X_test_l1, y_test)))
 
-    msg("Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_patch_lift_train, y_train, X_patch_lift_test, y_test)))
+    X_train_l1 = X_train_l1.reshape(X_train.shape[0],-1, 50)
+    X_test_l1 = X_test_l1.reshape(X_test.shape[0],-1, 50)
 
-    '''
-    X_pooled = np.apply_along_axis(lambda im: gaussian_pool(im,2, imsize), 1, X_patch_lift)
-    msg("pooled Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_pooled, y)))
-    patch_shape2 = (3,3)
-    patch_rbf2 = RBFSampler(gamma=1, random_state=RANDOM_STATE, n_components=2000).fit(np.zeros(patch_shape2[0]*patch_shape2[1]*50))
-    X_patch_layer2 = apply_patch_rbf(X_pooled.reshape(1797, 196, 50), 16, patch_shape2, patch_rbf2)
-    msg("2 level CKN Classifier Test accuracy: {0}".format(get_model_acc(clf, X_patch_layer2, y)))
-    '''
+    X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 2, 200, False)
+    msg("Level 2 Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l2, y_train, X_test_l2, y_test)))
+
+
