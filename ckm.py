@@ -46,6 +46,8 @@ def load_data(dataset="mnist_small", random_state=RANDOM_STATE):
         mnist = fetch_mldata('MNIST original', data_home="/work/vaishaal/ckm")
         mnist.data = mnist.data/255.0
         X_train, X_test, y_train, y_test = cross_validation.train_test_split(mnist.data, mnist.target, test_size=1.0/7.0, random_state=random_state)
+    else:
+        raise Exception("Datset not found")
     return (X_train, y_train), (X_test, y_test)
 
 def msg(message, delim=False):
@@ -57,6 +59,7 @@ def apply_patch_rbf(X,imsize, patches, rbf_weights, rbf_offset):
 
     new_shape = patches.shape[:-3] + (patches.shape[-3]*patches.shape[-1]*patches.shape[-2],)
     patches = patches.reshape(new_shape)
+    print "new patch shape", patches.shape
     X_lift = np.zeros((X.shape[0], X.shape[1], len(rbf_offset)))
     k = 0
     for n in range(X.shape[0]):
@@ -99,7 +102,7 @@ def patchify_all_imgs(X, patch_shape, pad=True, pad_mode='constant', cval=0):
     out = []
     for x in X:
         dim = x.shape[0]
-        x = x.reshape(np.sqrt(dim), np.sqrt(dim), x.shape[1])
+        x = x.reshape(int(np.sqrt(dim)), int(np.sqrt(dim)), x.shape[1])
         patches = patchify(x, patch_shape)
         out.append(patches.reshape(dim, patch_shape[0], patch_shape[1], -1))
     return np.array(out)
@@ -138,8 +141,7 @@ def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True):
     print "Generated test patches"
     X_patch_lift_test = apply_patch_rbf(X_test, X_test.shape[1], patches_test, patch_rbf.random_weights_, patch_rbf.random_offset_)
     print "Lifted test"
-    msg("Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_patch_lift_train, y_train, X_patch_lift_test, y_test)))
-    print "SHAPE", X_patch_lift_train.shape
+    print "Pre pool shape", X_patch_lift_train.shape
 
     imsize = (np.sqrt(X_train.shape[1]), np.sqrt(X_train.shape[1]), patch_rbf.n_components)
     if (pool):
@@ -173,13 +175,13 @@ if __name__ == "__main__":
     X_train = X_train[:,:,np.newaxis]
     X_test = X_test[:,:,np.newaxis]
 
-    X_train_l1, X_test_l1 = ckm_apply(X_train, X_test, patch_shape, 2, 50, True)
-    msg("Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l1, y_train, X_test_l1, y_test)))
+    X_train_l1, X_test_l1 = ckm_apply(X_train, X_test, patch_shape,1.616 , 50, True)
 
     X_train_l1 = X_train_l1.reshape(X_train.shape[0],-1, 50)
     X_test_l1 = X_test_l1.reshape(X_test.shape[0],-1, 50)
 
-    X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 2, 200, False)
+    X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 1.616, 200, True)
+
     msg("Level 2 Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l2, y_train, X_test_l2, y_test)))
 
 
