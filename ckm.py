@@ -6,6 +6,10 @@ from sklearn import cross_validation
 from sklearn import metrics
 from skimage.measure import block_reduce
 from scipy import signal
+from sklearn.preprocessing import OneHotEncoder
+
+
+import random
 
 import scipy
 import numpy as np
@@ -64,12 +68,11 @@ def apply_patch_rbf(X,imsize, patches, rbf_weights, rbf_offset):
     k = 0
     for n in range(X.shape[0]):
         image_patches = patches[n, :]
-        flat_patch_norm = np.maximum(np.linalg.norm(image_patches, axis=1), 0.001)[:,np.newaxis]
+        flat_patch_norm = np.maximum(np.linalg.norm(image_patches, axis=1), 1e-4)[:,np.newaxis]
         flat_patch_normalized = image_patches/flat_patch_norm
         projection = flat_patch_normalized.dot(rbf_weights)
         projection += rbf_offset
         np.cos(projection, projection)
-        projection *= np.sqrt(2.) / np.sqrt(len(rbf_offset))
         X_lift[n] = flat_patch_norm*projection
 
     X_lift = X_lift.reshape(X_lift.shape[0], X_lift.shape[1]*X_lift.shape[2])
@@ -90,7 +93,7 @@ def gaussian_pool(x, pool_size, imsize):
     return flatten(x_out[::pool_size, ::pool_size,:])
 
 def get_model_acc(clf, X_train, y_train, X_test, y_test, r_state=RANDOM_STATE):
-    msg("STARTING OPTIMIZATION")
+    msg("STARTING OPTIMIZATION, train size: {0}".format(X_train.shape))
     clf.fit(X_train, y_train)
     y_pred = clf.predict(X_test)
     return metrics.accuracy_score(y_test, y_pred)
@@ -127,9 +130,30 @@ def patchify(img, patch_shape, pad=True, pad_mode='constant', cval=0):
     strides = img.itemsize*np.array([Y*Z, Z, Y*Z, Z, 1])
     patches = np.lib.stride_tricks.as_strided(img, shape=shape, strides=strides)
     return patches
-def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True):
-    patch_rbf = RBFSampler(gamma=gamma, random_state=RANDOM_STATE, n_components=n_components).fit(np.zeros((1,patch_shape[0]*patch_shape[1]*X_train.shape[-1])))
+
+def learn_gamma(patches, sample_size=3000, percentile=10):
+    patches = patches.reshape(-1,patches.shape[2]*patches.shape[3]*patches.shape[-1])
+    x_indices = np.random.choice(patches.shape[0], sample_size)
+    y_indices = np.random.choice(patches.shape[0], sample_size)
+    x = patches[x_indices]
+    y = patches[y_indices]
+    x_norm = np.maximum(np.linalg.norm(x, axis=1), 1e-16)[:,np.newaxis]
+    y_norm = np.maximum(np.linalg.norm(y, axis=1), 1e-16)[:,np.newaxis]
+    x = x/x_norm
+    y = y/y_norm
+    diff = x - y
+    norms = np.linalg.norm(diff, axis=1)
+    return 1.0/((1.0/np.sqrt(2) * np.median(norms))**2)
+
+
+
+def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, compute_gamma=False):
     patches_train = patchify_all_imgs(X_train, patch_shape, pad=False)
+    if (compute_gamma):
+        print "USING LEARNED GAMMA ", learn_gamma(patches_train)
+        gamma = learn_gamma(patches_train)
+
+    patch_rbf = RBFSampler(gamma=gamma, random_state=RANDOM_STATE, n_components=n_components).fit(np.zeros((1,patch_shape[0]*patch_shape[1]*X_train.shape[-1])))
     print "Generated train patches"
     print "Patches_train size", patches_train.shape
     print "RBF map shape", patch_rbf.random_weights_.shape
@@ -149,6 +173,33 @@ def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True):
     else:
         return X_patch_lift_train, X_patch_lift_test
 
+def gradient_method(X_train, y_train, X_test, y_test, lambdav):
+        gmat = (1.0/X_train.shape[0])*(X_train.T.dot(X_train))
+        print np.trace(gmat)
+        lambdav = 1e-3*np.trace(gmat)/gmat.shape[0]
+        gmat = gmat + lambdav*np.eye(gmat.shape[0]);
+        w = np.zeros((10, gmat.shape[0]))
+        num_samples = X_train.shape[0]
+        onehot = lambda x: np.eye(10)[x]
+        y_train_hot = np.array(map(onehot, y_train))
+        y_test_hot = np.array(map(onehot, y_test))
+    
+        for k in range(50):
+            train_preds  = w.dot(X_train.T).T # 60000 x 10
+            train_preds = train_preds - np.max(train_preds, axis=1)[:,np.newaxis]
+            train_preds = np.exp(train_preds)
+            train_preds = train_preds/(np.sum(train_preds, axis=1)[:,np.newaxis])
+            train_preds = y_train_hot - train_preds
+            grad = (1.0/num_samples)*(X_train.T.dot(train_preds).T) - lambdav*w
+            w = w + (np.linalg.solve(gmat, grad.T)).T
+            y_train_pred = np.argmax(w.dot(X_train.T).T, axis=1)
+            y_test_pred = np.argmax(w.dot(X_test.T).T, axis=1)
+            train_acc = metrics.accuracy_score(y_train, y_train_pred)
+            test_acc = metrics.accuracy_score(y_test, y_test_pred)
+            print "Train Accuracy is {0}, Test Accuracy is {1}".format(train_acc, test_acc)
+        print y_train[:10]
+
+
 if __name__ == "__main__":
     msg("Start Data Load", True)
     (X_train, y_train), (X_test, y_test) = load_data("mnist_full")
@@ -166,25 +217,38 @@ if __name__ == "__main__":
     msg("Random RBF Classifier Validation accuracy: {0}".format(get_model_acc(clf, X_train_lift, y_train, X_test_lift, y_test)))
     '''
 
-    clf = SGDClassifier(loss="hinge", alpha=0.001, random_state=RANDOM_STATE)
     msg("Start Random Patch RBF train", True)
     patch_shape = (5,5)
-
     X_train = X_train[:,:,np.newaxis]
     X_test = X_test[:,:,np.newaxis]
-
-    X_train_l1, X_test_l1 = ckm_apply(X_train, X_test, patch_shape, 1.5 , 50, True)
-    msg("Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l1, y_train, X_test_l1, y_test)))
-
-    '''
-    patch_shape_2 = (3,3)
-    X_train_l1 = X_train_l1.reshape(X_train.shape[0],-1, 50)
-    X_test_l1 = X_test_l1.reshape(X_test.shape[0],-1, 50)
-
-    X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 2, 200, True)
-
-    msg("Level 2 Patch RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l2, y_train, X_test_l2, y_test)))
-    '''
+    for gamma in [2.2]:
+        X_train_l1, X_test_l1 = ckm_apply(X_train, X_test, patch_shape, gamma , 50, True, False)
+        lambdav =  10e-5*np.mean(np.mean(X_train_l1*X_train_l1, axis=1))
 
 
+        '''
+        clf = SGDClassifier(loss="hinge", alpha=0.0001, random_state=RANDOM_STATE)
+        msg("Patch RBF Classifier Test accuracy, gamma:{1}: {0}".format(get_model_acc(clf, X_train_l1, y_train, X_test_l1, y_test), gamma  ))
+        '''
+
+        patch_shape_2 = (2,2)
+        X_train_l1 = X_train_l1.reshape(X_train.shape[0],-1, 50)
+        X_test_l1 = X_test_l1.reshape(X_test.shape[0],-1, 50)
+        X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 1.26, 200, True, True)
+        gradient_method(X_train_l2, y_train, X_test_l2, y_test, lambdav)
+
+        '''
+        msg("Level 2 Patch 400 features 2x2 gamma: 1.26 patches RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l2, y_train, X_test_l2, y_test)))
+
+        X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 1.0, 200, True)
+        msg("Level 2 Patch 200 features 2x2 gamma: 1.0 patches RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l2, y_train, X_test_l2, y_test)))
+
+
+        X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 1.5, 200, True)
+        msg("Level 2 Patch 200 features 2x2 gamma: 1.5 patches RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l2, y_train, X_test_l2, y_test)))
+
+
+        X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 1.65, 200, True)
+        msg("Level 2 Patch 200 features 2x2 gamma: 1.65 patches RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l2, y_train, X_test_l2, y_test)))
+        '''
 

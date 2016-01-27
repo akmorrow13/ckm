@@ -1,6 +1,6 @@
 from sklearn import datasets
 from sklearn.datasets import fetch_mldata
-from sklearn.linear_model import SGDClassifier
+from sklearn.linear_model import SGDClassifier, LogisticRegression
 from sklearn.kernel_approximation import RBFSampler, Nystroem
 from sklearn import cross_validation
 from sklearn import metrics
@@ -29,15 +29,15 @@ DELIM = "="*100
 RANDOM_STATE=0
 flatten = ndarray.flatten
 
-BASENAME = "ckn-mnist-full"
+BASENAME = "ckn-mnist-full4"
 
 OUTPATH = "/work/vaishaal/ckm/{0}".format(BASENAME)
 td = lambda x : os.path.join(BASENAME, x)
 
 
-ONE_LEVEL_FEATURE_CONFIGS = {"1level.1" : { 'dataset' : ['mnist_full'], 'seed': [0], 'gammas': [[0.8],[1.2], [1.6], [2.0], [2.4]], 'filters': [[50]], 'patch_shapes': [[5]]}}
+ONE_LEVEL_FEATURE_CONFIGS = {"1level.1" : { 'dataset' : ['mnist_full'], 'seed': [0], 'gammas': [[4]], 'filters': [[50]], 'patch_shapes': [[5]]}}
 
-SOLVE_CONFIGS = {'loss': ['log','hinge'], 'reg': [0.01,0.001,0.0001]}
+SOLVE_CONFIGS = {'loss': ['log'], 'reg': [0.00001]}
 
 def dict_product(dicts):
     return (dict(itertools.izip(dicts, x)) for x in itertools.product(*dicts.itervalues()))
@@ -73,6 +73,7 @@ def run_features(infile, outfile, dc):
     X_test_lift = X_test[:,:,np.newaxis]
     t1 = time.time()
     for i, gamma in enumerate(dc["gammas"]):
+        i = i + 3
         filter_size = dc["filters"][i]
         ps = dc["patch_shapes"][i]
         patch_shape = (ps, ps)
@@ -103,7 +104,8 @@ def run_solve(infile, outfile, outloc, exp_name, solve_config, si):
     loss = solve_config['loss']
     reg = solve_config['reg']
     rand = f_config['seed']
-    clf = SGDClassifier(loss=loss, alpha=reg, random_state=rand)
+    gamma = f_config['gammas'][0]
+    clf = LogisticRegression(C=reg)
     print feature_out['X_train'].shape
     clf.fit(feature_out['X_train'], feature_out['y_train'])
     X_test = feature_out['X_test']
@@ -112,15 +114,6 @@ def run_solve(infile, outfile, outloc, exp_name, solve_config, si):
     y_test = solve_out['y_test'] = feature_out['y_test']
     acc = metrics.accuracy_score(y_test, y_pred)
     print("Reg is {0}, gamma is {1}, loss is {2} accuracy is: {3}".format(reg, f_config['gammas'], loss, acc))
-    pickle.dump({'infile' : infile,
-                 'outfile' : outfile,
-                 'solve_out' : solve_out,
-                 'fc_dict' : f_config,
-                 'solve_config' : solve_config,
-                 'si' : si},
-                open(outfile, 'w'), -1)
-
-
 
 if __name__ == "__main__":
     pipeline_run([run_features, run_solve])
