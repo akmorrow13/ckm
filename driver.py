@@ -8,6 +8,8 @@ from ckm import *
 import logging
 import collections
 
+from tabulate import tabulate
+
 '''
 Driver for Convolutional Kernel Machine experiments
 '''
@@ -29,11 +31,10 @@ def flatten_dict(d, parent_key='', sep='_'):
     '''
     items = []
     for k, v in d.items():
-        new_key = parent_key + sep + k if parent_key else k
         if isinstance(v, collections.MutableMapping):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
+            items.extend(flatten_dict(v, k, sep=sep).items())
         else:
-            items.append((new_key, v))
+            items.append((k, v))
     return dict(items)
 
 
@@ -58,12 +59,13 @@ def gen_features(ckm_params, X_train, X_test, seed):
 
 def compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred):
     exp_flatten = flatten_dict(exp)
+    exp_flatten = dict(map(lambda x: (x[0], [str(x[1])]), exp_flatten.items()))
     df = DataFrame.from_dict(exp_flatten)
     train_acc = metrics.accuracy_score(y_train, y_train_pred)
     test_acc = metrics.accuracy_score(y_test, y_test_pred)
     df.insert(len(df.columns), "train_acc", train_acc)
     df.insert(len(df.columns), "test_acc", test_acc)
-    print df
+    print tabulate(df, headers="keys")
     return df
 
 
@@ -72,10 +74,12 @@ def build_ckm(ckm_params, seed):
     filters = ckm_params.get("filters")
     bandwidth = ckm_params.get("bandwidth")
     patch_sizes = ckm_params.get("patch_sizes")
+    print "LAYERS ", layers
     def ckm_run(X_train, X_test):
         for i in range(layers):
             patch_shape = (patch_sizes[i], patch_sizes[i])
-            X_train, X_test =  ckm_apply(X_train, X_test, patch_shape, bandwidth[i], filters[i], random_state=seed)
+            print "Bandwidth ", bandwidth[i]
+            X_train, X_test =  ckm_apply(X_train, X_test, patch_shape, bandwidth[i], filters[i], random_state=(seed+i))
         return X_train, X_test
     return ckm_run
 
@@ -85,9 +89,9 @@ def solve(solve_params, X_train, y_train, X_test, y_test, seed):
     loss = solve_params["loss"]
     reg = solve_params["reg"]
     if (loss == "softmax"):
-        y_train_pred, y_test_pred = gradient_method(X_train, y_train, X_test, y_test)
+        y_train_pred, y_test_pred = gradient_method(X_train, y_train, X_test, y_test, reg)
     else:
-        clf = SGDClassifier(loss="hinge", random_state=RANDOM_STATE, alpha=reg)
+        clf = SGDClassifier(loss=loss, random_state=RANDOM_STATE, alpha=reg)
         clf.fit(X_train, y_train)
         y_train_pred = clf.predict(X_train)
         y_test_pred = clf.predict(X_test)

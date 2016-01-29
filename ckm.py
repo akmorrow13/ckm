@@ -25,6 +25,7 @@ st = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d-%H:%M:%S')
 BASENAME = "vaishaal-ckn-{0}".format(st)
 DELIM = "="*100
 RANDOM_STATE= int(random.random()*100)
+RANDOM_STATE= 0
 flatten = ndarray.flatten
 
 def load_data(dataset="mnist_small", random_state=RANDOM_STATE):
@@ -149,9 +150,9 @@ def learn_gamma(patches, sample_size=3000, percentile=10):
 
 
 
-def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, compute_gamma=False, random_state=RANDOM_STATE):
+def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, random_state=RANDOM_STATE):
     patches_train = patchify_all_imgs(X_train, patch_shape, pad=False)
-    if (compute_gamma):
+    if (gamma == None):
         print "USING LEARNED GAMMA ", learn_gamma(patches_train)
         gamma = learn_gamma(patches_train)
 
@@ -179,6 +180,8 @@ def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, comp
     X_out_test = X_out_test.reshape(X_test.shape[0],-1, 50)
     return X_out_train, X_out_test
 def gradient_method(X_train, y_train, X_test, y_test, multiplier=1e-2):
+        X_train = X_train.reshape(X_train.shape[0], -1)
+        X_test = X_test.reshape(X_test.shape[0], -1)
         gmat = (1.0/X_train.shape[0])*(X_train.T.dot(X_train))
         print np.trace(gmat)
         lambdav = multiplier*np.trace(gmat)/gmat.shape[0]
@@ -188,7 +191,7 @@ def gradient_method(X_train, y_train, X_test, y_test, multiplier=1e-2):
         onehot = lambda x: np.eye(10)[x]
         y_train_hot = np.array(map(onehot, y_train))
         y_test_hot = np.array(map(onehot, y_test))
-        for k in range(75):
+        for k in range(50):
             train_preds  = w.dot(X_train.T).T # 60000 x 10
             train_preds = train_preds - np.max(train_preds, axis=1)[:,np.newaxis]
             train_preds = np.exp(train_preds)
@@ -205,7 +208,7 @@ def gradient_method(X_train, y_train, X_test, y_test, multiplier=1e-2):
 
 if __name__ == "__main__":
     msg("Start Data Load", True)
-    (X_train, y_train), (X_test, y_test) = load_data("mnist_full")
+    (X_train, y_train), (X_test, y_test) = load_data("mnist_small")
     msg("Data load complete")
     '''
     msg("Start linear model train", True)
@@ -222,17 +225,11 @@ if __name__ == "__main__":
 
     msg("Start Random Patch RBF train", True)
     patch_shape = (5,5)
-    for gamma in [1.8, 2.0, 2.0, 2.2, 2.4]:
-        X_train_l1, X_test_l1 = ckm_apply(X_train, X_test, patch_shape, gamma , 50, True, False)
-        lambdav =  10e-5*np.mean(np.mean(X_train_l1*X_train_l1, axis=1))
-
-
-
+    for gamma in [1.8]:
+        X_train_l1, X_test_l1 = ckm_apply(X_train, X_test, patch_shape, gamma , 50, True)
         patch_shape_2 = (2,2)
-        X_train_l1 = X_train_l1.reshape(X_train.shape[0],-1, 50)
-        X_test_l1 = X_test_l1.reshape(X_test.shape[0],-1, 50)
-        X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 1.26, 400, True, True)
-        for multiplier in [1e-5, 1e-4, 1e-3]:
+        X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 1.26, 200, True)
+        for multiplier in [1e-4]:
             print "Regularization value mult", multiplier
             gradient_method(X_train_l2, y_train, X_test_l2, y_test, multiplier)
 
