@@ -1,0 +1,15 @@
+dataset: mnist_small
+mode: python
+seed: 0
+
+ckm_params:
+    layers: 1
+    patch_sizes: [5, 2]
+    bandwidth: [2.2, None]
+    filters: [50, 200]
+
+solver_params:
+    loss: softmax
+    reg: 0.1
+
+

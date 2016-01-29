@@ -52,6 +52,9 @@ def load_data(dataset="mnist_small", random_state=RANDOM_STATE):
         X_train, X_test, y_train, y_test = cross_validation.train_test_split(mnist.data, mnist.target, test_size=1.0/7.0, random_state=random_state)
     else:
         raise Exception("Datset not found")
+
+    X_train = X_train[:,:,np.newaxis]
+    X_test = X_test[:,:,np.newaxis]
     return (X_train, y_train), (X_test, y_test)
 
 def msg(message, delim=False):
@@ -63,7 +66,6 @@ def apply_patch_rbf(X,imsize, patches, rbf_weights, rbf_offset):
 
     new_shape = patches.shape[:-3] + (patches.shape[-3]*patches.shape[-1]*patches.shape[-2],)
     patches = patches.reshape(new_shape)
-    print "new patch shape", patches.shape
     X_lift = np.zeros((X.shape[0], patches.shape[1], len(rbf_offset)))
     k = 0
     for n in range(X.shape[0]):
@@ -147,13 +149,13 @@ def learn_gamma(patches, sample_size=3000, percentile=10):
 
 
 
-def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, compute_gamma=False):
+def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, compute_gamma=False, random_state=RANDOM_STATE):
     patches_train = patchify_all_imgs(X_train, patch_shape, pad=False)
     if (compute_gamma):
         print "USING LEARNED GAMMA ", learn_gamma(patches_train)
         gamma = learn_gamma(patches_train)
 
-    patch_rbf = RBFSampler(gamma=gamma, random_state=RANDOM_STATE, n_components=n_components).fit(np.zeros((1,patch_shape[0]*patch_shape[1]*X_train.shape[-1])))
+    patch_rbf = RBFSampler(gamma=gamma, random_state=random_state, n_components=n_components).fit(np.zeros((1,patch_shape[0]*patch_shape[1]*X_train.shape[-1])))
     print "Generated train patches"
     print "Patches_train size", patches_train.shape
     print "RBF map shape", patch_rbf.random_weights_.shape
@@ -167,12 +169,15 @@ def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, comp
     print patches_train.shape
     imsize = (np.sqrt(patches_train.shape[1]), np.sqrt(patches_train.shape[1]), patch_rbf.n_components)
     if (pool):
-        X_pooled_train = np.array([ gaussian_pool(x,2,imsize)  for x in X_patch_lift_train])
-        X_pooled_test = np.array([ gaussian_pool(x,2,imsize)  for x in X_patch_lift_test])
-        return X_pooled_train, X_pooled_test
+        X_out_train = np.array([ gaussian_pool(x,2,imsize)  for x in X_patch_lift_train])
+        X_out_test = np.array([ gaussian_pool(x,2,imsize)  for x in X_patch_lift_test])
     else:
-        return X_patch_lift_train, X_patch_lift_test
+        X_out_train = X_patch_lift_train
+        X_out_test = X_patch_lift_test
 
+    X_out_train = X_out_train.reshape(X_train.shape[0],-1, 50)
+    X_out_test = X_out_test.reshape(X_test.shape[0],-1, 50)
+    return X_out_train, X_out_test
 def gradient_method(X_train, y_train, X_test, y_test, multiplier=1e-2):
         gmat = (1.0/X_train.shape[0])*(X_train.T.dot(X_train))
         print np.trace(gmat)
@@ -196,8 +201,7 @@ def gradient_method(X_train, y_train, X_test, y_test, multiplier=1e-2):
             train_acc = metrics.accuracy_score(y_train, y_train_pred)
             test_acc = metrics.accuracy_score(y_test, y_test_pred)
             print "Train Accuracy is {0}, Test Accuracy is {1}".format(train_acc, test_acc)
-        print y_train[:10]
-
+        return y_train_pred, y_test_pred
 
 if __name__ == "__main__":
     msg("Start Data Load", True)
@@ -218,17 +222,11 @@ if __name__ == "__main__":
 
     msg("Start Random Patch RBF train", True)
     patch_shape = (5,5)
-    X_train = X_train[:,:,np.newaxis]
-    X_test = X_test[:,:,np.newaxis]
     for gamma in [1.8, 2.0, 2.0, 2.2, 2.4]:
         X_train_l1, X_test_l1 = ckm_apply(X_train, X_test, patch_shape, gamma , 50, True, False)
         lambdav =  10e-5*np.mean(np.mean(X_train_l1*X_train_l1, axis=1))
 
 
-        '''
-        clf = SGDClassifier(loss="hinge", alpha=0.0001, random_state=RANDOM_STATE)
-        msg("Patch RBF Classifier Test accuracy, gamma:{1}: {0}".format(get_model_acc(clf, X_train_l1, y_train, X_test_l1, y_test), gamma  ))
-        '''
 
         patch_shape_2 = (2,2)
         X_train_l1 = X_train_l1.reshape(X_train.shape[0],-1, 50)
