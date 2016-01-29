@@ -24,7 +24,7 @@ from mnist import MNIST
 st = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d-%H:%M:%S')
 BASENAME = "vaishaal-ckn-{0}".format(st)
 DELIM = "="*100
-RANDOM_STATE=0
+RANDOM_STATE= int(random.random()*100)
 flatten = ndarray.flatten
 
 def load_data(dataset="mnist_small", random_state=RANDOM_STATE):
@@ -173,18 +173,17 @@ def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, comp
     else:
         return X_patch_lift_train, X_patch_lift_test
 
-def gradient_method(X_train, y_train, X_test, y_test, lambdav):
+def gradient_method(X_train, y_train, X_test, y_test, multiplier=1e-2):
         gmat = (1.0/X_train.shape[0])*(X_train.T.dot(X_train))
         print np.trace(gmat)
-        lambdav = 1e-3*np.trace(gmat)/gmat.shape[0]
+        lambdav = multiplier*np.trace(gmat)/gmat.shape[0]
         gmat = gmat + lambdav*np.eye(gmat.shape[0]);
         w = np.zeros((10, gmat.shape[0]))
         num_samples = X_train.shape[0]
         onehot = lambda x: np.eye(10)[x]
         y_train_hot = np.array(map(onehot, y_train))
         y_test_hot = np.array(map(onehot, y_test))
-    
-        for k in range(50):
+        for k in range(75):
             train_preds  = w.dot(X_train.T).T # 60000 x 10
             train_preds = train_preds - np.max(train_preds, axis=1)[:,np.newaxis]
             train_preds = np.exp(train_preds)
@@ -221,7 +220,7 @@ if __name__ == "__main__":
     patch_shape = (5,5)
     X_train = X_train[:,:,np.newaxis]
     X_test = X_test[:,:,np.newaxis]
-    for gamma in [2.2]:
+    for gamma in [1.8, 2.0, 2.0, 2.2, 2.4]:
         X_train_l1, X_test_l1 = ckm_apply(X_train, X_test, patch_shape, gamma , 50, True, False)
         lambdav =  10e-5*np.mean(np.mean(X_train_l1*X_train_l1, axis=1))
 
@@ -234,8 +233,10 @@ if __name__ == "__main__":
         patch_shape_2 = (2,2)
         X_train_l1 = X_train_l1.reshape(X_train.shape[0],-1, 50)
         X_test_l1 = X_test_l1.reshape(X_test.shape[0],-1, 50)
-        X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 1.26, 200, True, True)
-        gradient_method(X_train_l2, y_train, X_test_l2, y_test, lambdav)
+        X_train_l2, X_test_l2 = ckm_apply(X_train_l1, X_test_l1, patch_shape_2, 1.26, 400, True, True)
+        for multiplier in [1e-5, 1e-4, 1e-3]:
+            print "Regularization value mult", multiplier
+            gradient_method(X_train_l2, y_train, X_test_l2, y_test, multiplier)
 
         '''
         msg("Level 2 Patch 400 features 2x2 gamma: 1.26 patches RBF Classifier Test accuracy: {0}".format(get_model_acc(clf, X_train_l2, y_train, X_test_l2, y_test)))
