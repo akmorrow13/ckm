@@ -5,7 +5,7 @@ seed: 0
 ckm_params:
     layers: 2
     patch_sizes: [5, 2]
-    bandwidth: [1.8, 1.26]
+    bandwidth: [1.8, null]
     filters: [50, 400]
 
 solver_params:
