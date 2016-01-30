@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# Run the not slow implemented tests
+
+nosetests -v --rednose -A "(not slow) and (implemented)" -s
