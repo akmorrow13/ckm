@@ -76,18 +76,16 @@ def python_run(exp):
     dataset = exp["dataset"]
     seed = exp["seed"]
     (X_train, y_train), (X_test, y_test) = load_data(dataset)
-    ckm_params = exp["ckm_params"]
-    solver_params = exp["solver_params"]
-    X_train_lift, X_test_lift = gen_features(ckm_params, X_train, X_test, seed)
-    y_train_pred, y_test_pred = solve(solver_params, X_train_lift, y_train, X_test_lift, y_test, seed)
+    X_train_lift, X_test_lift = gen_features(exp, X_train, X_test, seed)
+    y_train_pred, y_test_pred = solve(exp, X_train_lift, y_train, X_test_lift, y_test, seed)
     results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
     return results
 
 def scala_run(exp):
     raise(Exception("Scala Run has not been implemented"))
 
-def gen_features(ckm_params, X_train, X_test, seed):
-    ckm_run = build_ckm(ckm_params, seed)
+def gen_features(exp, X_train, X_test, seed):
+    ckm_run = build_ckm(exp, seed)
     X_train_lift, X_test_lift = ckm_run(X_train, X_test)
     return X_train_lift, X_test_lift
 
@@ -102,11 +100,11 @@ def compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred):
     return df
 
 
-def build_ckm(ckm_params, seed):
-    layers = ckm_params.get("layers")
-    filters = ckm_params.get("filters")
-    bandwidth = ckm_params.get("bandwidth")
-    patch_sizes = ckm_params.get("patch_sizes")
+def build_ckm(exp, seed):
+    layers = exp.get("layers")
+    filters = exp.get("filters")
+    bandwidth = exp.get("bandwidth")
+    patch_sizes = exp.get("patch_sizes")
     def ckm_run(X_train, X_test):
         for i in range(layers):
             patch_shape = (patch_sizes[i], patch_sizes[i])
@@ -114,11 +112,11 @@ def build_ckm(ckm_params, seed):
         return X_train, X_test
     return ckm_run
 
-def solve(solve_params, X_train, y_train, X_test, y_test, seed):
+def solve(exp, X_train, y_train, X_test, y_test, seed):
     X_train = X_train.reshape(X_train.shape[0], -1)
     X_test = X_test.reshape(X_test.shape[0], -1)
-    loss = solve_params["loss"]
-    reg = solve_params["reg"]
+    loss = exp["loss"]
+    reg = exp["reg"]
     if (loss == "softmax"):
         y_train_pred, y_test_pred = softmax(X_train, y_train, X_test, y_test, reg)
     else:

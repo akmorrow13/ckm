@@ -12,9 +12,8 @@ def python_mnist_features_test():
     exp = load(open("./tests/mnist_small.exp"))
     dataset = exp["dataset"]
     seed = exp["seed"]
-    ckm_params = exp["ckm_params"]
     (X_train, y_train), (X_test, y_test) = load_data(dataset)
-    X_train_lift, X_test_lift = gen_features(ckm_params, X_train, X_test, seed)
+    X_train_lift, X_test_lift = gen_features(exp, X_train, X_test, seed)
     assert 0.6 <= np.mean(np.mean(X_train_lift)) <= 0.8
 
 @attr("implemented")
