@@ -1,16 +1,16 @@
 # General parameters
 dataset: mnist_small
-mode: scala
+mode: python
 seed: 0
 
 # CKM Parameters
-layers: 1
+layers: 2
 patch_sizes: [5, 2]
-bandwidth: [1.8, 2.2]
+bandwidth: [1.8, 2.6]
 filters: [50, 400]
 
 # Solver Params
 loss: softmax
-reg: 0.001
+reg: 0.0001
 
 
