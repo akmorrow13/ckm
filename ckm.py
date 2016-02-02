@@ -17,6 +17,33 @@ RANDOM_STATE= int(random.random()*100)
 RANDOM_STATE= 0
 flatten = ndarray.flatten
 
+def load_data(dataset="mnist_small"):
+    '''
+        @param dataset: The dataset to load
+        @param random_state: random state to control random parameter
+
+        Load a specified dataset currently only
+        "mnist_small" and "mnist" are supported
+    '''
+    if (dataset == "mnist_small"):
+        X_train = np.loadtxt("./mldata/mnist_small/X_train", delimiter=",").reshape(1540,64)
+        X_test = np.loadtxt("./mldata/mnist_small/X_test", delimiter=",").reshape(257,64)
+        y_train = np.loadtxt("./mldata/mnist_small/y_train", delimiter=",")
+        y_test = np.loadtxt("./mldata/mnist_small/y_test", delimiter=",")
+    elif dataset == "mnist_full":
+        mndata = MNIST('./mldata/mnist')
+        X_train, y_train = map(np.array, mndata.load_training())
+        X_test, y_test = map(np.array, mndata.load_testing())
+        X_train = X_train/255.0
+        X_test = X_test/255.0
+    else:
+        raise Exception("Datset not found")
+
+    X_train = X_train[:,:,np.newaxis]
+    X_test = X_test[:,:,np.newaxis]
+    return (X_train, y_train), (X_test, y_test)
+
+
 
 def apply_patch_rbf(X,imsize, patches, rbf_weights, rbf_offset):
 

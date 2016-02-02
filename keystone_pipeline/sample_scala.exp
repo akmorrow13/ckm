@@ -1,6 +1,7 @@
 # General parameters
 dataset: mnist_small
-mode: python
+expid: mnist_small_simple
+mode: scala
 seed: 0
 
 # CKM Parameters

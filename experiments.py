@@ -7,6 +7,8 @@ from ckm import *
 
 import logging
 import collections
+import os
+import subprocess
 
 from tabulate import tabulate
 
@@ -28,33 +30,6 @@ def main():
     if (exp.get("mode") == "python"):
         results = python_run(exp)
     print tabulate(results, headers="keys")
-
-def load_data(dataset="mnist_small"):
-    '''
-        @param dataset: The dataset to load
-        @param random_state: random state to control random parameter
-
-        Load a specified dataset currently only
-        "mnist_small" and "mnist" are supported
-    '''
-    if (dataset == "mnist_small"):
-        X_train = np.loadtxt("./mldata/mnist_small/X_train", delimiter=",").reshape(1540,64)
-        X_test = np.loadtxt("./mldata/mnist_small/X_test", delimiter=",").reshape(257,64)
-        y_train = np.loadtxt("./mldata/mnist_small/y_train", delimiter=",")
-        y_test = np.loadtxt("./mldata/mnist_small/y_test", delimiter=",")
-    elif dataset == "mnist_full":
-        mndata = MNIST('./mldata/mnist')
-        X_train, y_train = map(np.array, mndata.load_training())
-        X_test, y_test = map(np.array, mndata.load_testing())
-        X_train = X_train/255.0
-        X_test = X_test/255.0
-    else:
-        raise Exception("Datset not found")
-
-    X_train = X_train[:,:,np.newaxis]
-    X_test = X_test[:,:,np.newaxis]
-    return (X_train, y_train), (X_test, y_test)
-
 
 def flatten_dict(d, parent_key='', sep='_'):
 
@@ -82,7 +57,42 @@ def python_run(exp):
     return results
 
 def scala_run(exp):
-    raise(Exception("Scala Run has not been implemented"))
+    expid = exp["expid"]
+    config_yaml = "./tests/sample_scala.exp"
+    env = os.environ.copy()
+    env['KEYSTONE_MEM'] = str('32g')
+    env['SPARK_EXECUTOR_CORES'] = str(32)
+    env['OMP_NUM_THREADS'] = str(1)
+    # sanity check before running the process
+
+    # if not os.path.isdir(outdir):
+    #     raise ValueError("output dir must exist")
+
+    logfile = expid + ".spark.log"
+    # if os.path.exists(logfile) and output_sanity_check:
+    #     raise ValueError("output dir has logfile, should be empty")
+    pipelineClass="pipelines.CKM"
+    pipelineJar = "/work/vaishaal/ckm/keystone_pipeline/target/scala-2.10/ckm-assembly-0.1.jar"
+    if not os.path.exists(pipelineJar):
+        raise ValueError("Cannot find pipeline jar")
+
+    # basically capturing the popen output and saving it to disk  and
+    # printing it to screen are a multithreaded nightmare, so we let
+    # tee do the work for us
+
+    ## pipefail set so that we get the correct process return code
+    cmd = " ".join(["./keystone_pipeline/bin/run-pipeline.sh", pipelineClass,
+                                   pipelineJar, config_yaml])
+
+    print cmd
+    p = subprocess.Popen(" ".join(["./keystone_pipeline/bin/run-pipeline.sh", pipelineClass,
+                                   pipelineJar, config_yaml]),
+                         shell=True, executable='/bin/bash')
+    #p = subprocess.Popen(cmd, shell=True, executable='/bin/bash', env = env)
+    p.wait()
+
+    if p.returncode != 0:
+        raise Exception("invocation terminated with non-zero exit status")
 
 def gen_features(exp, X_train, X_test, seed):
     ckm_run = build_ckm(exp, seed)

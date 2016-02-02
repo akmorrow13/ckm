@@ -30,11 +30,11 @@ fi
 ASSEMBLY_JAR=""
 DEPS_JAR=""
 
-files="$FWDIR"/target/scala-$SCALA_VERSION/solarflares-assembly-*.jar
+files="$FWDIR"/target/scala-$SCALA_VERSION/ckm-assembly-*.jar
 
 if [ ${#files[@])} != 0 ]; then
-  export ASSEMBLY_JAR=`ls "$FWDIR"/target/scala-$SCALA_VERSION/solarflares-assembly*.jar | tail -n 1`
-  export DEPS_JAR=`ls "$FWDIR"/target/scala-$SCALA_VERSION/solarflares-assembly*.jar | head -n 1`
+  export ASSEMBLY_JAR=`ls "$FWDIR"/target/scala-$SCALA_VERSION/ckm-assembly*.jar | tail -n 1`
+  export DEPS_JAR=`ls "$FWDIR"/target/scala-$SCALA_VERSION/ckm-assembly*.jar | head -n 1`
 fi
 
 if [[ -z $ASSEMBLY_JAR ]]; then

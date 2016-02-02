@@ -22,7 +22,7 @@ fi
 
 echo "automatically setting OMP_NUM_THREADS=$OMP_NUM_THREADS"
 
-ASSEMBLYJAR="/data/jonas/suncast/suncast/pipeline/target/scala-2.10/solarflares-assembly-0.1-deps.jar"
+ASSEMBLYJAR="/data/jonas/suncast/suncast/pipeline/target/scala-2.10/ckm-assembly-0.1-deps.jar"
 
 
 if [[ -z "$SPARK_HOME" ]]; then

@@ -2,7 +2,7 @@ import AssemblyKeys._
 
 assemblySettings
 
-name := "solarflares"
+name := "ckm"
 
 version := "0.1"
 
