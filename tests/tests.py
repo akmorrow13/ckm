@@ -34,11 +34,11 @@ def python_mnist_full_test():
     dataset 
     assert(float(results['test_acc'][0]) >= 0.994)
 
-@attr('slow', 'scala')
+@attr('implemented', 'scala')
 def scala_mnist_sanity_test():
     ''' Runs a 2 layer ckn via keystone on a tiny susbet of MNIST
         should get 99.64 percent on test set '''
-    results = scala_run(load(open("./tests/mnist_small.exp")))
+    results = scala_run(load(open("./tests/sample_scala.exp")))
     assert(float(results['test_acc'][0]) >= 0.996)
 
 
@@ -46,5 +46,5 @@ def scala_mnist_sanity_test():
 def scala_mnist_full_test():
     ''' Runs a 2 layer ckn via keystone on all of MNIST
         should get 99.46 percent on test set '''
-    results = scala_run(load(open("./tests/mnist_small.exp")))
+    results = scala_run(load(open("./tests/sample_scala.exp")))
     assert(float(results['test_acc'][0]) >= 0.994)

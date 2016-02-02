@@ -13,7 +13,9 @@ import workflow.Transformer
  * Used for using the same label for all patches from an image. Then apply a Cosine non linearity and sum pool
  * in one implementation
  *
- * TODO: Look into using Breeze's convolve
+ * A few quirks:
+ *  * During the convolution, every overlapping k x k image patch is normalized to have unit norm
+ *  * After the convolution and non linearity the norms are multiplied back
  *
  * @param filters Bank of convolution filters to apply - each filter is an array in row-major order.
  * @param imgWidth Width of images in pixels.
@@ -21,32 +23,29 @@ import workflow.Transformer
  */
 class CCaP(
     filters: DenseMatrix[Double],
+    phase: DenseVector[Double],
     imgWidth: Int,
     imgHeight: Int,
     imgChannels: Int,
     stride: Int,
-    poolSize: Int,
-    maxVal: Double = 0.0,
-    alpha: Double = 0.0,
-    normalizePatches: Boolean = true,
-    varConstant: Double = 10.0)
+    poolSize: Int)
   extends Transformer[Image, Image] {
-
   val convSize = math.sqrt(filters.cols/imgChannels).toInt
   val convolutions = filters.t
-
   val resWidth = imgWidth - convSize + 1
   val resHeight = imgHeight - convSize + 1
 
   override def apply(in: RDD[Image]): RDD[Image] = {
-    in.mapPartitions(CCaP.convolvePartitions(_, resWidth, resHeight, imgChannels, stride, poolSize, maxVal, alpha, convSize,
-      normalizePatches, convolutions, varConstant))
+  val convolutionsBroadcast = in.sparkContext.broadcast(convolutions)
+  val phaseBroadcast = in.sparkContext.broadcast(phase)
+
+    in.mapPartitions(CCaP.convolvePartitions(_, resWidth, resHeight, imgChannels, stride, poolSize, convSize, convolutionsBroadcast.value, phaseBroadcast.value))
   }
 
   def apply(in: Image): Image = {
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
     val image = CCaP.convolve(in, patchMat, resWidth, resHeight,
-      imgChannels, stride, poolSize, maxVal, alpha, convSize, normalizePatches, convolutions)
+      imgChannels, stride, poolSize, convSize, convolutions, phase)
     image
   }
 }
@@ -59,19 +58,16 @@ object CCaP {
       imgChannels: Int,
       stride: Int,
       poolSize: Int,
-      maxVal: Double = 0.0,
-      alpha: Double = 0.0,
       convSize: Int,
-      normalizePatches: Boolean,
       convolutions: DenseMatrix[Double],
-      varConstant: Double = 10.0): Image = {
+      phase: DenseVector[Double]): Image = {
 
-    val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize,
-      normalizePatches, varConstant)
+    val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize)
 
-    val convRes: DenseMatrix[Double] = imgMat * convolutions
+    val patchNorms = norm(imgMat :+ 1e-12, Axis._1)
+    val normalizedPatches = imgMat(::, *) :/ patchNorms
 
-
+    val convRes: DenseMatrix[Double] = (normalizedPatches * convolutions)
     val xDim = resWidth
     val yDim = resHeight
     val numSourceChannels = convolutions.cols
@@ -81,7 +77,11 @@ object CCaP {
     val numPoolsX = math.ceil((xDim - strideStart).toDouble / stride).toInt
     val numPoolsY = math.ceil((yDim - strideStart).toDouble / stride).toInt
     val patch = new Array[Double]( numPoolsX * numPoolsY * numOutChannels)
+    val blurSigma = poolSize/math.sqrt(2)
+    val gaussianWeights = true
 
+
+    // NOTE: While loops in scala are ~10x faster than for loops
     // Start at strideStart in (x, y) and
     var x = strideStart
     while (x < xDim) {
@@ -100,9 +100,16 @@ object CCaP {
           while(s < endX) {
             var b = startY
             while(b < endY) {
+              val weight =
+              if (gaussianWeights) {
+                val patchDist = math.pow(s - x, 2) + math.pow(b - y, 2)
+                math.exp((-1.0/(blurSigma*blurSigma))*patchDist)
+              } else {
+                1.0
+              }
+              val patchNorm = patchNorms(s + b*resWidth)
               val pix =  convRes(s + b*resWidth, c)
-              val outvar =  math.cos(pix)
-
+              val outvar =  weight * patchNorm * math.cos(pix) + phase(s + b*resWidth)
               val pos_position = c + output_offset
               patch(pos_position) += outvar
               b = b + 1
@@ -131,9 +138,7 @@ object CCaP {
       resWidth: Int,
       resHeight: Int,
       imgChannels: Int,
-      convSize: Int,
-      normalizePatches: Boolean,
-      varConstant: Double): DenseMatrix[Double] = {
+      convSize: Int): DenseMatrix[Double] = {
     var x,y,chan,pox,poy,py,px = 0
 
     x = 0
@@ -163,10 +168,7 @@ object CCaP {
       }
       x+=1
     }
-
-    val patchMatN = if(normalizePatches) Stats.normalizeRows(patchMat, varConstant) else patchMat
-
-    patchMatN
+    patchMat
   }
 
   def convolvePartitions(
@@ -176,15 +178,12 @@ object CCaP {
       imgChannels: Int,
       stride: Int,
       poolSize: Int,
-      maxVal: Double = 0.0,
-      alpha: Double = 0.0,
       convSize: Int,
-      normalizePatches: Boolean,
       convolutions: DenseMatrix[Double],
-      varConstant: Double): Iterator[Image] = {
+      phase: DenseVector[Double]): Iterator[Image] = {
 
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
-    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, stride, poolSize, maxVal, alpha, convSize, normalizePatches,
-      convolutions, varConstant))
+    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, stride, poolSize, convSize,
+      convolutions, phase))
   }
 }

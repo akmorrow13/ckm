@@ -58,7 +58,7 @@ object Benchmarks {
   def CCaPBench() = {
 
     println("CCaP Benchmark")
-
+    /*
     val imgsizeX = 256
     val imgsizeY = 256
     val imgChan = 12
@@ -103,6 +103,7 @@ object Benchmarks {
     }
     println(s"Average for regular convolution + poolRectify is ${total1/totalIters} seconds")
     println(s"Average for CCaP is ${total2/totalIters} seconds")
+    */
   }
 
   def main(args: Array[String]) {
