@@ -8,12 +8,13 @@ import loaders.{CifarLoader, MnistLoader}
 import nodes.images._
 import nodes.learning.{BlockLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator}
 import nodes.stats.{StandardScaler, Sampler}
-import nodes.util.{Cacher, ClassLabelIndicatorsFromIntLabels, MaxClassifier}
+import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
 import pipelines.Logging
 import scopt.OptionParser
-import utils.{MatrixUtils, Stats, ImageMetadata, LabeledImage}
+import workflow.Pipeline
+import utils.{Image, MatrixUtils, Stats, ImageMetadata, LabeledImage}
 
 
 import scala.reflect.BeanProperty
@@ -30,18 +31,36 @@ object CKM extends Serializable with Logging {
 
     var numInputFeatures = numChannels
     var numOutputFeatures = conf.filters(0)*math.pow(conf.patch_sizes(0), 2).toInt
-    val filters = List[DenseMatrix[Double]]()
-    val phases = List[DenseVector[Double]]()
+    var convKernel: Pipeline[Image, Image] = new Identity()
+
     for (i <- 0 to conf.layers - 1) {
       val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures, Rand.gaussian) :* conf.bandwidth(i)
       val b = DenseVector.rand(numOutputFeatures, Rand.uniform) :* (2*math.Pi)
-      filters :+ W
-      phases :+ b
+      convKernel = convKernel andThen new CCaP(W, b, xDim, yDim, numChannels, 2, 2)
       numInputFeatures = numOutputFeatures
       numOutputFeatures = (conf.filters(i + 1) * math.pow(conf.patch_sizes(i + 1), 2)).toInt
     }
-    val filtersBroadcast = sc.broadcast(filters)
-    val phasesBroadcast = sc.broadcast(phases)
+
+    val featurizer = ImageExtractor andThen convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
+
+    val XTrain = featurizer(data.train)
+    XTrain.count()
+    val XTest = featurizer(data.test)
+    XTest.count()
+    val labelVectorizer = ClassLabelIndicatorsFromIntLabels(conf.numClasses)
+
+    val yTrain = labelVectorizer(LabelExtractor(data.train))
+    val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
+
+    val clf = new BlockLeastSquaresEstimator(4096, 1, conf.reg).fit(XTrain, yTrain) andThen TopKClassifier(1)
+
+    val yTrainPred = clf.apply(XTrain)
+    val yTestPred =  clf.apply(XTest)
+
+    val trainAcc = Stats.getErrPercent(yTrainPred, yTrain.map(convert(_, Int).toArray),  yTrain.count())
+    val testAcc = Stats.getErrPercent(yTestPred, yTest.map(convert(_, Int).toArray),  yTest.count())
+
+    println(s"Train Accuracy is ${trainAcc}, Test Accuracy is ${testAcc}")
   }
 
   def loadData(sc: SparkContext, dataset: String):Dataset = {
@@ -74,6 +93,7 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  patch_sizes: Array[Int] = Array(5)
     @BeanProperty var  loss: String = "softmax"
     @BeanProperty var  reg: Double = 0.001
+    @BeanProperty var  numClasses: Int = 10
   }
 
 

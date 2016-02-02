@@ -3,6 +3,7 @@ dataset: mnist_small
 expid: mnist_small_simple
 mode: scala
 seed: 0
+num_classes: 10
 
 # CKM Parameters
 layers: 2
