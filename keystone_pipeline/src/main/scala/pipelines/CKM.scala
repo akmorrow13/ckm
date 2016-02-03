@@ -6,7 +6,7 @@ import breeze.numerics._
 import evaluation.MulticlassClassifierEvaluator
 import loaders.{CifarLoader, MnistLoader, SmallMnistLoader}
 import nodes.images._
-import nodes.learning.{BlockLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator}
+import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator}
 import nodes.stats.{StandardScaler, Sampler}
 import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier}
 import org.apache.spark.{SparkConf, SparkContext}
@@ -27,7 +27,10 @@ object CKM extends Serializable with Logging {
   def run(sc: SparkContext, conf: CKMConf) {
     val data: Dataset = loadData(sc, conf.dataset)
 
-    var (xDim, yDim, numChannels) = getInfo(data)
+    val (xDim, yDim, numChannels) = getInfo(data)
+
+    var currX = xDim
+    var currY = yDim
 
     var convKernel: Pipeline[Image, Image] = new Identity()
     var numInputFeatures = numChannels
@@ -36,16 +39,21 @@ object CKM extends Serializable with Logging {
       var numOutputFeatures = conf.filters(i)
       val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
       val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, Rand.gaussian) :* conf.bandwidth(i)
-      println(s"Layer ${i} filter shape ${W.rows} ${W.cols}")
       val b = DenseVector.rand(numOutputFeatures, Rand.uniform) :* (2*math.Pi)
-      convKernel = convKernel andThen new CCaP(W, b, xDim, yDim, numChannels, 2, 2)
+      val ccap = new CCaP(W, b, currX, currY, numInputFeatures, 2, 2)
+      convKernel = convKernel andThen ccap
+
+      currX = ccap.outX
+      currY = ccap.outY
+
       numInputFeatures = numOutputFeatures
     }
+
 
     val featurizer = ImageExtractor andThen convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
     val XTrain = featurizer(data.train)
-    XTrain.count()
+    val count = XTrain.count()
     val XTest = featurizer(data.test)
     XTest.count()
     val labelVectorizer = ClassLabelIndicatorsFromIntLabels(conf.numClasses)
@@ -53,7 +61,9 @@ object CKM extends Serializable with Logging {
     val yTrain = labelVectorizer(LabelExtractor(data.train))
     val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
     val numFeatures = XTrain.take(1)(0).size
-    val clf = new BlockLeastSquaresEstimator(numFeatures, 1, conf.reg).fit(XTrain, yTrain) andThen MaxClassifier
+    println(s"numFeatures: ${numFeatures}, count: ${count}")
+    println(data.train.take(1)(0).label)
+    val clf = new BlockWeightedLeastSquaresEstimator(numFeatures, 1, conf.reg, 0.5).fit(XTrain, yTrain) andThen MaxClassifier
 
     val yTrainPred = clf.apply(XTrain)
     val yTestPred =  clf.apply(XTest)
@@ -67,8 +77,8 @@ object CKM extends Serializable with Logging {
   def loadData(sc: SparkContext, dataset: String):Dataset = {
     val (train, test) =
     if (dataset == "cifar") {
-      val train = CifarLoader(sc, "../mldata/cifar").cache
-      val test = CifarLoader(sc, "../mldata/cifar").cache
+      val train = CifarLoader(sc, "/work/vaishaal/ckm/mldata/cifar/cifar_train.bin").cache
+      val test = CifarLoader(sc, "/work/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
       (train, test)
     } else if (dataset == "mnist") {
       val train = MnistLoader(sc, "/work/vaishaal/ckm/mldata/mnist", 10, "train").cache
@@ -125,6 +135,7 @@ object CKM extends Serializable with Logging {
       val appName = s"CKM"
       val conf = new SparkConf().setAppName(appName)
       conf.setIfMissing("spark.master", "local[16]")
+      conf.set("spark.driver.maxResultSize", "0")
       val sc = new SparkContext(conf)
       run(sc, appConfig)
       sc.stop()

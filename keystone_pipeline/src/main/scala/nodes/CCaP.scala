@@ -35,6 +35,13 @@ class CCaP(
   val resWidth = imgWidth - convSize + 1
   val resHeight = imgHeight - convSize + 1
 
+
+  val strideStart = poolSize / 2
+
+  val outX = math.ceil((resWidth - strideStart).toDouble / stride).toInt
+  val outY = math.ceil((resHeight- strideStart).toDouble / stride).toInt
+
+
   override def apply(in: RDD[Image]): RDD[Image] = {
   val convolutionsBroadcast = in.sparkContext.broadcast(convolutions)
   val phaseBroadcast = in.sparkContext.broadcast(phase)
