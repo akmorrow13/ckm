@@ -4,7 +4,7 @@ import breeze.stats.distributions.Rand
 import breeze.linalg._
 import breeze.numerics._
 import evaluation.MulticlassClassifierEvaluator
-import loaders.{CifarLoader, MnistLoader}
+import loaders.{CifarLoader, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import nodes.learning.{BlockLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator}
 import nodes.stats.{StandardScaler, Sampler}
@@ -27,18 +27,19 @@ object CKM extends Serializable with Logging {
   def run(sc: SparkContext, conf: CKMConf) {
     val data: Dataset = loadData(sc, conf.dataset)
 
-    val (xDim, yDim, numChannels) = getInfo(data)
+    var (xDim, yDim, numChannels) = getInfo(data)
 
-    var numInputFeatures = numChannels
-    var numOutputFeatures = conf.filters(0)*math.pow(conf.patch_sizes(0), 2).toInt
     var convKernel: Pipeline[Image, Image] = new Identity()
+    var numInputFeatures = numChannels
 
-    for (i <- 0 to conf.layers - 1) {
-      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures, Rand.gaussian) :* conf.bandwidth(i)
+    for (i <- 0 until conf.layers) {
+      var numOutputFeatures = conf.filters(i)
+      val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
+      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, Rand.gaussian) :* conf.bandwidth(i)
+      println(s"Layer ${i} filter shape ${W.rows} ${W.cols}")
       val b = DenseVector.rand(numOutputFeatures, Rand.uniform) :* (2*math.Pi)
       convKernel = convKernel andThen new CCaP(W, b, xDim, yDim, numChannels, 2, 2)
       numInputFeatures = numOutputFeatures
-      numOutputFeatures = (conf.filters(i + 1) * math.pow(conf.patch_sizes(i + 1), 2)).toInt
     }
 
     val featurizer = ImageExtractor andThen convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
@@ -51,14 +52,14 @@ object CKM extends Serializable with Logging {
 
     val yTrain = labelVectorizer(LabelExtractor(data.train))
     val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
-
-    val clf = new BlockLeastSquaresEstimator(4096, 1, conf.reg).fit(XTrain, yTrain) andThen TopKClassifier(1)
+    val numFeatures = XTrain.take(1)(0).size
+    val clf = new BlockLeastSquaresEstimator(numFeatures, 1, conf.reg).fit(XTrain, yTrain) andThen TopKClassifier(1)
 
     val yTrainPred = clf.apply(XTrain)
     val yTestPred =  clf.apply(XTest)
 
-    val trainAcc = Stats.getErrPercent(yTrainPred, yTrain.map(convert(_, Int).toArray),  yTrain.count())
-    val testAcc = Stats.getErrPercent(yTestPred, yTest.map(convert(_, Int).toArray),  yTest.count())
+    val trainAcc = 1 - Stats.getErrPercent(yTrainPred, yTrain.map(convert(_, Int).toArray),  yTrain.count())
+    val testAcc = 1 - Stats.getErrPercent(yTestPred, yTest.map(convert(_, Int).toArray),  yTest.count())
 
     println(s"Train Accuracy is ${trainAcc}, Test Accuracy is ${testAcc}")
   }
@@ -69,9 +70,13 @@ object CKM extends Serializable with Logging {
       val train = CifarLoader(sc, "../mldata/cifar").cache
       val test = CifarLoader(sc, "../mldata/cifar").cache
       (train, test)
+    } else if (dataset == "mnist") {
+      val train = MnistLoader(sc, "/work/vaishaal/ckm/mldata/mnist", 10, "train").cache
+      val test = MnistLoader(sc, "/work/vaishaal/ckm/mldata/mnist", 10, "test").cache
+      (train, test)
     } else {
-      val train = MnistLoader(sc, "../mldata/mnist", 10, "train").cache
-      val test = MnistLoader(sc, "../mldata/mnist", 10, "test").cache
+      val train = SmallMnistLoader(sc, "/work/vaishaal/ckm/mldata/mnist_small", 10, "train").cache
+      val test = SmallMnistLoader(sc, "/work/vaishaal/ckm/mldata/mnist_small", 10, "test").cache
       (train, test)
     }
     return new Dataset(train, test)

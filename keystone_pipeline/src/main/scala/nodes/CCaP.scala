@@ -109,7 +109,7 @@ object CCaP {
               }
               val patchNorm = patchNorms(s + b*resWidth)
               val pix =  convRes(s + b*resWidth, c)
-              val outvar =  weight * patchNorm * math.cos(pix) + phase(s + b*resWidth)
+              val outvar =  weight * patchNorm * math.cos(pix) + phase(c)
               val pos_position = c + output_offset
               patch(pos_position) += outvar
               b = b + 1
@@ -151,12 +151,9 @@ object CCaP {
             while (pox < convSize) {
               chan = 0
               while (chan < imgChannels) {
-
                 px = chan + pox*imgChannels + poy*imgChannels*convSize
                 py = x + y*resWidth
-
                 patchMat(py, px) = img.get(x+pox, y+poy, chan)
-
                 chan+=1
               }
               pox+=1
