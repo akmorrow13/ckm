@@ -8,7 +8,7 @@ import loaders.{CifarLoader, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import nodes.learning.{BlockLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator}
 import nodes.stats.{StandardScaler, Sampler}
-import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier}
+import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
 import pipelines.Logging
@@ -53,15 +53,15 @@ object CKM extends Serializable with Logging {
     val yTrain = labelVectorizer(LabelExtractor(data.train))
     val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
     val numFeatures = XTrain.take(1)(0).size
-    val clf = new BlockLeastSquaresEstimator(numFeatures, 1, conf.reg).fit(XTrain, yTrain) andThen TopKClassifier(1)
+    val clf = new BlockLeastSquaresEstimator(numFeatures, 1, conf.reg).fit(XTrain, yTrain) andThen MaxClassifier
 
     val yTrainPred = clf.apply(XTrain)
     val yTestPred =  clf.apply(XTest)
 
-    val trainAcc = 1 - Stats.getErrPercent(yTrainPred, yTrain.map(convert(_, Int).toArray),  yTrain.count())
-    val testAcc = 1 - Stats.getErrPercent(yTestPred, yTest.map(convert(_, Int).toArray),  yTest.count())
-
-    println(s"Train Accuracy is ${trainAcc}, Test Accuracy is ${testAcc}")
+    val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), 10)
+    val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), 10)
+    println(s"total training accuracy ${1 - trainEval.totalError}")
+    println(s"total testing accuracy ${1 - testEval.totalError}")
   }
 
   def loadData(sc: SparkContext, dataset: String):Dataset = {
