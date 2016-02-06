@@ -2,6 +2,7 @@ import argparse
 
 from yaml import load, dump
 
+import features_pb2
 from pandas import DataFrame
 from ckm import *
 
@@ -98,6 +99,39 @@ def gen_features(exp, X_train, X_test, seed):
     ckm_run = build_ckm(exp, seed)
     X_train_lift, X_test_lift = ckm_run(X_train, X_test)
     return X_train_lift, X_test_lift
+
+def save_features_python(X, y, name):
+    dataset = features_pb2.Dataset()
+    dataset.name = name
+    for i in range(len(y_train)):
+        datum = dataset.datum.add()
+        datum.label = y_train[i]
+        datum.data.extend(X_train[0].tolist())
+
+    f = open(dataset.name + ".bin", "wb")
+    f.write(dataset.SerializeToString())
+    f.close()
+
+
+def load_features_python(name):
+    dataset = features_pb2.Dataset()
+    f = open("{0}.bin".format(name), "wb")
+    dataset.ParseFromString(f.read())
+    f.close()
+    X = []
+    y = []
+    for datum in dataset.data:
+        x_i = list(datum.data)
+        y_i = datum.label
+        X.append(x_i)
+        y_i.append(y)
+
+    return np.array(X), np.array(y)
+
+
+
+
+
 
 def compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred):
     exp_flatten = flatten_dict(exp)

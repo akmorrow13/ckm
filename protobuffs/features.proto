@@ -1,0 +1,11 @@
+package features;
+
+message Datum {
+    repeated double data = 1 [packed=true];
+    required int32 label = 2;
+}
+
+message Dataset {
+    required string name = 3;
+    repeated Datum data = 4;
+}
