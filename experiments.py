@@ -95,18 +95,30 @@ def scala_run(exp):
     if p.returncode != 0:
         raise Exception("invocation terminated with non-zero exit status")
 
+    y_train, y_train_weights  = load_scala_results("/tmp/ckm_train_results")
+    y_test, y_test_weights  = load_scala_results("/tmp/ckm_test_results")
+    # TODO: Do more interesting things here
+    y_train_pred = np.argmax(y_train_weights, axis=1)
+    y_test_pred = np.argmax(y_test_weights, axis=1)
+    results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
+    return results
+
+
 def gen_features(exp, X_train, X_test, seed):
     ckm_run = build_ckm(exp, seed)
     X_train_lift, X_test_lift = ckm_run(X_train, X_test)
-    return X_train_lift, X_test_lift
+    X_train = X_train_lift.reshape(X_train.shape[0], -1)
+    X_test = X_test_lift.reshape(X_test.shape[0], -1)
+    return X_train, X_test
 
 def save_features_python(X, y, name):
+    X = X.reshape(X.shape[0], -1)
     dataset = features_pb2.Dataset()
     dataset.name = name
-    for i in range(len(y_train)):
-        datum = dataset.datum.add()
-        datum.label = y_train[i]
-        datum.data.extend(X_train[0].tolist())
+    for i in range(len(y)):
+        datum = dataset.data.add()
+        datum.label = int(y[i])
+        datum.data.extend(X[i, 0:].tolist())
 
     f = open(dataset.name + ".bin", "wb")
     f.write(dataset.SerializeToString())
@@ -115,7 +127,7 @@ def save_features_python(X, y, name):
 
 def load_features_python(name):
     dataset = features_pb2.Dataset()
-    f = open("{0}.bin".format(name), "wb")
+    f = open("{0}.bin".format(name), "rb")
     dataset.ParseFromString(f.read())
     f.close()
     X = []
