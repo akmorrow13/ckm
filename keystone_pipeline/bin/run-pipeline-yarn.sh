@@ -39,15 +39,16 @@ spark-submit \
   --num-executors 12 \
   --executor-cores 16 \
   --driver-class-path $JARFILE:$ASSEMBLYJAR:$HOME/hadoop/conf \
-  --driver-library-path /home/eecs/shivaram/openblas-install/lib/lib:$FWDIR/../lib \
-  --conf spark.executor.extraLibraryPath=/home/eecs/shivaram/openblas-install/lib/lib:$FWDIR/../lib \
+  --driver-library-path /home/eecs/shivaram/openblas-install/lib:$FWDIR/../lib \
+  --conf spark.executor.extraLibraryPath=/home/eecs/shivaram/openblas-install/lib:$FWDIR/../lib \
   --conf spark.executor.extraClassPath=$JARFILE:$ASSEMBLYJAR:$HOME/hadoop/conf \
   --conf spark.serializer=org.apache.spark.serializer.JavaSerializer \
-  --conf spark.executorEnv.LD_LIBRARY_PATH=/home/eecs/shivaram/openblas-install/lib/lib \
+  --conf spark.executorEnv.LD_LIBRARY_PATH=/home/eecs/shivaram/openblas-install/lib \
   --conf spark.yarn.executor.memoryOverhead=15300 \
   --conf spark.mlmatrix.treeBranchingFactor=16 \
   --driver-memory $KEYSTONE_MEM \
   --conf spark.driver.maxResultSize=0 \
   --executor-memory 130g \
+  --jars $ASSEMBLYJAR \
   $JARFILE \
   "$@"
