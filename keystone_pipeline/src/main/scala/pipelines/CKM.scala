@@ -6,18 +6,20 @@ import breeze.numerics._
 import evaluation.MulticlassClassifierEvaluator
 import loaders.{CifarLoader, MnistLoader, SmallMnistLoader}
 import nodes.images._
+import workflow.Transformer
 import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator}
 import nodes.stats.{StandardScaler, Sampler}
-import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier}
+import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier} 
+
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
 import pipelines.Logging
 import scopt.OptionParser
 import workflow.Pipeline
-import utils.{Image, MatrixUtils, Stats, ImageMetadata, LabeledImage}
 import org.apache.log4j.Logger
 import org.apache.log4j.Level
 import org.apache.commons.math3.random.MersenneTwister
+import utils.{Image, MatrixUtils, Stats, ImageMetadata, LabeledImage, RowMajorArrayVectorizedImage, ChannelMajorArrayVectorizedImage}
 
 
 import scala.reflect.BeanProperty
@@ -58,8 +60,8 @@ object CKM extends Serializable with Logging {
       numInputFeatures = numOutputFeatures
     }
 
-
-    val featurizer = ImageExtractor andThen convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
+    val meta = data.train.take(1)(0).image.metadata
+    val featurizer = ImageExtractor andThen ImageVectorizer  andThen Transformer[DenseVector[Double], Image](x => ChannelMajorArrayVectorizedImage(x.toArray, meta)) andThen  convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
     val XTrain = featurizer(data.train)
     val count = XTrain.count()
@@ -108,16 +110,16 @@ object CKM extends Serializable with Logging {
   def loadData(sc: SparkContext, dataset: String):Dataset = {
     val (train, test) =
     if (dataset == "cifar") {
-      val train = CifarLoader(sc, "/work/vaishaal/ckm/mldata/cifar/cifar_train.bin").cache
-      val test = CifarLoader(sc, "/work/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
+      val train = CifarLoader(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_train.bin")
+      val test = CifarLoader(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
       (train, test)
     } else if (dataset == "mnist") {
-      val train = MnistLoader(sc, "/work/vaishaal/ckm/mldata/mnist", 10, "train").cache
-      val test = MnistLoader(sc, "/work/vaishaal/ckm/mldata/mnist", 10, "test").cache
+      val train = MnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist", 10, "train").cache
+      val test = MnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist", 10, "test").cache
       (train, test)
     } else {
-      val train = SmallMnistLoader(sc, "/work/vaishaal/ckm/mldata/mnist_small", 10, "train").cache
-      val test = SmallMnistLoader(sc, "/work/vaishaal/ckm/mldata/mnist_small", 10, "test").cache
+      val train = SmallMnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist_small", 10, "train").cache
+      val test = SmallMnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist_small", 10, "test").cache
       (train, test)
     }
     return new Dataset(train, test)
