@@ -1,6 +1,6 @@
 package pipelines
 
-import breeze.stats.distributions.Rand
+import breeze.stats.distributions._
 import breeze.linalg._
 import breeze.numerics._
 import evaluation.MulticlassClassifierEvaluator
@@ -15,11 +15,16 @@ import pipelines.Logging
 import scopt.OptionParser
 import workflow.Pipeline
 import utils.{Image, MatrixUtils, Stats, ImageMetadata, LabeledImage}
+import org.apache.log4j.Logger
+import org.apache.log4j.Level
+import org.apache.commons.math3.random.MersenneTwister
 
 
 import scala.reflect.BeanProperty
 import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.constructor.Constructor
+
+import java.io.{File, BufferedWriter, FileWriter}
 
 object CKM extends Serializable with Logging {
   val appName = "CKM"
@@ -28,18 +33,22 @@ object CKM extends Serializable with Logging {
     val data: Dataset = loadData(sc, conf.dataset)
 
     val (xDim, yDim, numChannels) = getInfo(data)
-
     var currX = xDim
     var currY = yDim
 
     var convKernel: Pipeline[Image, Image] = new Identity()
     var numInputFeatures = numChannels
 
+      implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
+      val gaussian = new Gaussian(0, 1)
+      val uniform = new Uniform(0, 1)
+
     for (i <- 0 until conf.layers) {
+
       var numOutputFeatures = conf.filters(i)
       val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
-      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, Rand.gaussian) :* conf.bandwidth(i)
-      val b = DenseVector.rand(numOutputFeatures, Rand.uniform) :* (2*math.Pi)
+      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, gaussian) :* conf.bandwidth(i)
+      val b = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
       val ccap = new CCaP(W, b, currX, currY, numInputFeatures, 2, 2)
       convKernel = convKernel andThen ccap
 
