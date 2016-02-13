@@ -16,6 +16,7 @@ from tabulate import tabulate
 from softmax import softmax
 
 from sklearn import metrics
+from sklearn.linear_model import SGDClassifier
 
 '''
 Driver for Convolutional Kernel Machine experiments
@@ -51,8 +52,16 @@ def python_run(exp):
         exp["seed"] = int(random.random*(2*32))
     dataset = exp["dataset"]
     seed = exp["seed"]
+    verbose = exp["verbose"]
     (X_train, y_train), (X_test, y_test) = load_data(dataset)
+    if (verbose):
+        print "Data loaded Train shape: {0}, Test Shape: {1}, Train Labels shape: {2}, \
+        Test Labels shape {3}".format(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
     X_train_lift, X_test_lift = gen_features(exp, X_train, X_test, seed)
+    if (verbose):
+        print "Data Featurized Train shape: {0}, Test Shape: {1}, Train Labels shape: {2}, \
+        Test Labels shape {3}".format(X_train_lift.shape, X_test_lift.shape, y_train.shape, y_test.shape)
+
     y_train_pred, y_test_pred = solve(exp, X_train_lift, y_train, X_test_lift, y_test, seed)
     results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
     return results
@@ -161,6 +170,7 @@ def build_ckm(exp, seed):
     filters = exp.get("filters")
     bandwidth = exp.get("bandwidth")
     patch_sizes = exp.get("patch_sizes")
+    verbose = exp.get("verbose")
     def ckm_run(X_train, X_test):
         for i in range(layers):
             patch_shape = (patch_sizes[i], patch_sizes[i])
@@ -173,10 +183,11 @@ def solve(exp, X_train, y_train, X_test, y_test, seed):
     X_test = X_test.reshape(X_test.shape[0], -1)
     loss = exp["loss"]
     reg = exp["reg"]
+    verbose = exp["verbose"]
     if (loss == "softmax"):
-        y_train_pred, y_test_pred = softmax(X_train, y_train, X_test, y_test, reg)
+        y_train_pred, y_test_pred = softmax(X_train, y_train, X_test, y_test, reg, verbose=True)
     else:
-        clf = SGDClassifier(loss=loss, random_state=RANDOM_STATE, alpha=reg)
+        clf = SGDClassifier(loss=loss, random_state=RANDOM_STATE, alpha=reg, verbose=int(verbose))
         clf.fit(X_train, y_train)
         y_train_pred = clf.predict(X_train)
         y_test_pred = clf.predict(X_test)

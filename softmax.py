@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn import metrics
 
-def softmax(X_train, y_train, X_test, y_test, multiplier=1e-2, numiter=50):
+def softmax(X_train, y_train, X_test, y_test, multiplier=1e-2, numiter=50, verbose=False):
         ''' Implementation of gauss-newton quassi-newton optimization algorithm
             with softmax objective
         '''
@@ -27,5 +27,7 @@ def softmax(X_train, y_train, X_test, y_test, multiplier=1e-2, numiter=50):
             y_test_pred = np.argmax(w.dot(X_test.T).T, axis=1)
             train_acc = metrics.accuracy_score(y_train, y_train_pred)
             test_acc = metrics.accuracy_score(y_test, y_test_pred)
+            if (verbose):
+              print "Iter: {0}, Train Accuracy: {1}, Test Accuracy: {2}".format(k, train_acc, test_acc)
         return y_train_pred, y_test_pred
 

@@ -17,6 +17,36 @@ RANDOM_STATE= int(random.random()*100)
 RANDOM_STATE= 0
 flatten = ndarray.flatten
 
+def unpickle(infile):
+    import cPickle
+    fo = open(infile, 'rb')
+    outdict = cPickle.load(fo)
+    fo.close()
+    return outdict
+
+def load_cifar():
+    train_batches = []
+    train_labels = []
+    for i in range(1,6):
+        cifar_out = unpickle("./mldata/cifarpy/data_batch_{0}".format(i))
+        train_batches.append(cifar_out["data"])
+        train_labels.extend(cifar_out["labels"])
+
+    # Stupid bull shit to get pixels in correct order
+    X_train= np.vstack(tuple(train_batches)).reshape(-1, 32*32, 3)
+    X_train = X_train.reshape(-1,3,32,32).transpose(0,2,3,1).reshape(-1,32*32, 3)
+    #mean_image = np.mean(X_train, axis=0)[np.newaxis, :, :]
+    #X_train = X_train - mean_image
+    y_train = np.array(train_labels)
+    cifar_out = unpickle("./mldata/cifarpy/test_batch")
+    X_test = cifar_out["data"].reshape(-1, 32*32, 3)
+    X_test = X_test.reshape(-1,3,32,32).transpose(0,2,3,1).reshape(-1,32*32, 3)
+    X_test = X_test
+    y_test = cifar_out["labels"]
+
+    return (X_train, np.array(y_train)), (X_test, np.array(y_test))
+
+
 def load_data(dataset="mnist_small"):
     '''
         @param dataset: The dataset to load
@@ -30,17 +60,22 @@ def load_data(dataset="mnist_small"):
         X_test = np.loadtxt("./mldata/mnist_small/X_test", delimiter=",").reshape(257,64)
         y_train = np.loadtxt("./mldata/mnist_small/y_train", delimiter=",")
         y_test = np.loadtxt("./mldata/mnist_small/y_test", delimiter=",")
-    elif dataset == "mnist_full":
+        X_train = X_train[:,:,np.newaxis]
+        X_test = X_test[:,:,np.newaxis]
+    elif dataset == "mnist":
         mndata = MNIST('./mldata/mnist')
         X_train, y_train = map(np.array, mndata.load_training())
         X_test, y_test = map(np.array, mndata.load_testing())
         X_train = X_train/255.0
         X_test = X_test/255.0
+        X_train = X_train[:,:,np.newaxis]
+        X_test = X_test[:,:,np.newaxis]
+    elif dataset == "cifar":
+        (X_train, y_train), (X_test, y_test) = load_cifar()
+
     else:
         raise Exception("Datset not found")
 
-    X_train = X_train[:,:,np.newaxis]
-    X_test = X_test[:,:,np.newaxis]
     return (X_train, y_train), (X_test, y_test)
 
 
@@ -152,6 +187,6 @@ def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, rand
         X_out_train = X_patch_lift_train
         X_out_test = X_patch_lift_test
 
-    X_out_train = X_out_train.reshape(X_train.shape[0],-1, 50)
-    X_out_test = X_out_test.reshape(X_test.shape[0],-1, 50)
+    X_out_train = X_out_train.reshape(X_train.shape[0],-1, n_components)
+    X_out_test = X_out_test.reshape(X_test.shape[0],-1, n_components)
     return X_out_train, X_out_test
