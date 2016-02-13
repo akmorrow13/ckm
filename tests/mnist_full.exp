@@ -1,5 +1,5 @@
 # General parameters
-dataset: mnist_full
+dataset: mnist
 mode: python
 seed: 0
 
@@ -7,9 +7,10 @@ seed: 0
 layers: 2
 patch_sizes: [5, 2]
 bandwidth: [1.8, 2.2]
-filters: [50, 400]
+filters: [50, 200]
 
 # Solver Params
 loss: softmax
 reg: 0.0001
 
+verbose: True

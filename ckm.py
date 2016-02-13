@@ -24,7 +24,7 @@ def unpickle(infile):
     fo.close()
     return outdict
 
-def load_cifar():
+def load_cifar(center=False):
     train_batches = []
     train_labels = []
     for i in range(1,6):
@@ -35,19 +35,20 @@ def load_cifar():
     # Stupid bull shit to get pixels in correct order
     X_train= np.vstack(tuple(train_batches)).reshape(-1, 32*32, 3)
     X_train = X_train.reshape(-1,3,32,32).transpose(0,2,3,1).reshape(-1,32*32, 3)
-    #mean_image = np.mean(X_train, axis=0)[np.newaxis, :, :]
-    #X_train = X_train - mean_image
+    mean_image = np.mean(X_train, axis=0)[np.newaxis, :, :]
     y_train = np.array(train_labels)
     cifar_out = unpickle("./mldata/cifarpy/test_batch")
     X_test = cifar_out["data"].reshape(-1, 32*32, 3)
     X_test = X_test.reshape(-1,3,32,32).transpose(0,2,3,1).reshape(-1,32*32, 3)
-    X_test = X_test
+    if center:
+        X_train = X_train - mean_image
+        X_test = X_test - mean_image
     y_test = cifar_out["labels"]
 
     return (X_train, np.array(y_train)), (X_test, np.array(y_test))
 
 
-def load_data(dataset="mnist_small"):
+def load_data(dataset="mnist_small", center=False):
     '''
         @param dataset: The dataset to load
         @param random_state: random state to control random parameter
@@ -145,7 +146,7 @@ def patchify(img, patch_shape, pad=True, pad_mode='constant', cval=0):
     patches = np.lib.stride_tricks.as_strided(img, shape=shape, strides=strides)
     return patches
 
-def learn_gamma(patches, sample_size=3000, percentile=10):
+def learn_gamma(patches, sample_size=3000, percentile=10, weight=1.414):
     patches = patches.reshape(-1,patches.shape[2]*patches.shape[3]*patches.shape[-1])
     x_indices = np.random.choice(patches.shape[0], sample_size)
     y_indices = np.random.choice(patches.shape[0], sample_size)
@@ -157,11 +158,11 @@ def learn_gamma(patches, sample_size=3000, percentile=10):
     y = y/y_norm
     diff = x - y
     norms = np.linalg.norm(diff, axis=1)
-    return 1.0/((1.0/np.sqrt(2) * np.median(norms))**2)
+    return 1.0/((1.0/weight * np.median(norms))**2)
 
 
 
-def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, random_state=RANDOM_STATE):
+def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, random_state=RANDOM_STATE, weight=1.414):
     patches_train = patchify_all_imgs(X_train, patch_shape, pad=False)
     if (gamma == None):
         #print "USING LEARNED GAMMA ", learn_gamma(patches_train)

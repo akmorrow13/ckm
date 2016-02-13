@@ -53,7 +53,8 @@ def python_run(exp):
     dataset = exp["dataset"]
     seed = exp["seed"]
     verbose = exp["verbose"]
-    (X_train, y_train), (X_test, y_test) = load_data(dataset)
+    center = exp.get("center")
+    (X_train, y_train), (X_test, y_test) = load_data(dataset, center)
     if (verbose):
         print "Data loaded Train shape: {0}, Test Shape: {1}, Train Labels shape: {2}, \
         Test Labels shape {3}".format(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
