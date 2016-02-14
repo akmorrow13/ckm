@@ -4,7 +4,7 @@ message Datum {
     repeated double data = 1 [packed=true];
     required int32 label = 2;
     repeated double label_weights = 3;
-    optional name = 4;
+    optional string name = 4;
 
 }
 

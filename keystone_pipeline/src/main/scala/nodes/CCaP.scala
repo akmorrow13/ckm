@@ -38,6 +38,7 @@ class CCaP(
 
   val strideStart = poolSize / 2
 
+
   val outX = math.ceil((resWidth - strideStart).toDouble / stride).toInt
   val outY = math.ceil((resHeight- strideStart).toDouble / stride).toInt
 
@@ -73,7 +74,15 @@ object CCaP {
 
     val patchNorms = norm(imgMat :+ 1e-12, Axis._1)
     val normalizedPatches = imgMat(::, *) :/ patchNorms
-
+    /*
+    println("CONVOLUTION SIZE IS " + convSize)
+    println("RES WIDTH IS " + resWidth)
+    println("RES Height IS " + resHeight)
+    println("PHASE SHAPE IS " + phase.size)
+    println(s"imgMat SHAPE ${imgMat.rows}, ${imgMat.cols}")
+    println(s"PATCH SHAPE ${normalizedPatches.rows}, ${normalizedPatches.cols}")
+    println(s"CONVOLUTION SHAPE ${convolutions.rows}, ${convolutions.cols}")
+    */
     val convRes: DenseMatrix[Double] = (normalizedPatches * convolutions)
     val xDim = resWidth
     val yDim = resHeight

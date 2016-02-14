@@ -72,7 +72,8 @@ object CKM extends Serializable with Logging {
     val numFeatures = XTrain.take(1)(0).size
     println(s"numFeatures: ${numFeatures}, count: ${count}")
     println(data.train.take(1)(0).label)
-    val clf = new BlockWeightedLeastSquaresEstimator(numFeatures, 1, conf.reg, 0.5).fit(XTrain, yTrain) andThen MaxClassifier
+    val model = new BlockWeightedLeastSquaresEstimator(numFeatures, 1, conf.reg, 0.5).fit(XTrain, yTrain)
+    val clf = model andThen MaxClassifier
 
     val yTrainPred = clf.apply(XTrain)
     val yTestPred =  clf.apply(XTest)
@@ -81,6 +82,27 @@ object CKM extends Serializable with Logging {
     val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), 10)
     println(s"total training accuracy ${1 - trainEval.totalError}")
     println(s"total testing accuracy ${1 - testEval.totalError}")
+
+    val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
+    val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
+
+    val trainPredictions = model(XTrain)
+    trainPredictions.zip(LabelExtractor(data.train)).map {
+        case (weights, label) => s"$label," + weights.toArray.mkString(",")
+      }.collect().foreach{x =>
+        out_train.write(x)
+        out_train.write("\n")
+      }
+      out_train.close()
+
+    val testPredictions = model(XTest)
+    testPredictions.zip(LabelExtractor(data.test)).map {
+        case (weights, label) => s"$label," + weights.toArray.mkString(",")
+      }.collect().foreach{x =>
+        out_test.write(x)
+        out_test.write("\n")
+      }
+      out_test.close()
   }
 
   def loadData(sc: SparkContext, dataset: String):Dataset = {
@@ -143,6 +165,8 @@ object CKM extends Serializable with Logging {
 
       val appName = s"CKM"
       val conf = new SparkConf().setAppName(appName)
+      Logger.getLogger("org").setLevel(Level.WARN)
+      Logger.getLogger("akka").setLevel(Level.WARN)
       conf.setIfMissing("spark.master", "local[16]")
       conf.set("spark.driver.maxResultSize", "0")
       val sc = new SparkContext(conf)

@@ -13,7 +13,7 @@ from google.protobuf import descriptor_pb2
 DESCRIPTOR = _descriptor.FileDescriptor(
   name='features.proto',
   package='features',
-  serialized_pb='\n\x0e\x66\x65\x61tures.proto\x12\x08\x66\x65\x61tures\"$\n\x05\x44\x61tum\x12\x0c\n\x04\x64\x61ta\x18\x01 \x03(\x01\x12\r\n\x05label\x18\x02 \x02(\x05\"6\n\x07\x44\x61taset\x12\x0c\n\x04name\x18\x03 \x02(\t\x12\x1d\n\x04\x64\x61ta\x18\x04 \x03(\x0b\x32\x0f.features.Datum')
+  serialized_pb='\n\x0e\x66\x65\x61tures.proto\x12\x08\x66\x65\x61tures\"M\n\x05\x44\x61tum\x12\x10\n\x04\x64\x61ta\x18\x01 \x03(\x01\x42\x02\x10\x01\x12\r\n\x05label\x18\x02 \x02(\x05\x12\x15\n\rlabel_weights\x18\x03 \x03(\x01\x12\x0c\n\x04name\x18\x04 \x01(\t\"6\n\x07\x44\x61taset\x12\x0c\n\x04name\x18\x03 \x02(\t\x12\x1d\n\x04\x64\x61ta\x18\x04 \x03(\x0b\x32\x0f.features.Datum')
 
 
 
@@ -31,11 +31,25 @@ _DATUM = _descriptor.Descriptor(
       has_default_value=False, default_value=[],
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
-      options=None),
+      options=_descriptor._ParseOptions(descriptor_pb2.FieldOptions(), '\020\001')),
     _descriptor.FieldDescriptor(
       name='label', full_name='features.Datum.label', index=1,
       number=2, type=5, cpp_type=1, label=2,
       has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      options=None),
+    _descriptor.FieldDescriptor(
+      name='label_weights', full_name='features.Datum.label_weights', index=2,
+      number=3, type=1, cpp_type=5, label=3,
+      has_default_value=False, default_value=[],
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      options=None),
+    _descriptor.FieldDescriptor(
+      name='name', full_name='features.Datum.name', index=3,
+      number=4, type=9, cpp_type=9, label=1,
+      has_default_value=False, default_value=unicode("", "utf-8"),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       options=None),
@@ -49,7 +63,7 @@ _DATUM = _descriptor.Descriptor(
   is_extendable=False,
   extension_ranges=[],
   serialized_start=28,
-  serialized_end=64,
+  serialized_end=105,
 )
 
 
@@ -83,8 +97,8 @@ _DATASET = _descriptor.Descriptor(
   options=None,
   is_extendable=False,
   extension_ranges=[],
-  serialized_start=66,
-  serialized_end=120,
+  serialized_start=107,
+  serialized_end=161,
 )
 
 _DATASET.fields_by_name['data'].message_type = _DATUM
@@ -104,4 +118,6 @@ class Dataset(_message.Message):
   # @@protoc_insertion_point(class_scope:features.Dataset)
 
 
+_DATUM.fields_by_name['data'].has_options = True
+_DATUM.fields_by_name['data']._options = _descriptor._ParseOptions(descriptor_pb2.FieldOptions(), '\020\001')
 # @@protoc_insertion_point(module_scope)

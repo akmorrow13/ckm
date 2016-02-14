@@ -40,8 +40,6 @@ object SmallMnistLoader {
       }
 
       val examples = (images zip labels).map(x => LabeledImage(x._1, x._2))
-      println("IMAGES SIZE " + images.size)
-      println("EXAMPLES SIZE " + examples.size)
       sc.parallelize(examples)
     }
 }

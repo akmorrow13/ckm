@@ -146,9 +146,17 @@ def load_features_python(name):
         x_i = list(datum.data)
         y_i = datum.label
         X.append(x_i)
-        y_i.append(y)
+        y.append(y_i)
 
     return np.array(X), np.array(y)
+
+def load_scala_results(name):
+    f = open(name, "r")
+    result_lines = f.readlines()
+    results = np.array(map(lambda x: map(lambda y: float(y), x.split(",")), result_lines))
+    labels = results[:, 0]
+    weights = results[:, 1:]
+    return labels, weights
 
 
 

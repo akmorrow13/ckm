@@ -26,8 +26,11 @@ libraryDependencies ++= Seq(
   "org.scalanlp" %% "breeze-viz" % "0.11.2",
   "io.scif" % "scifio" % "0.27.0",
   "gov.nasa.gsfc.heasarc" % "nom-tam-fits" % "1.14.0-SNAPSHOT",
-  "net.imagej" % "imagej" % "2.0.0-rc-42" exclude("io.scif", "scifio")
+  "net.imagej" % "imagej" % "2.0.0-rc-42" exclude("io.scif", "scifio"),
+  "com.google.protobuf" % "protobuf-java" % "2.4.1"
 )
+
+
 
 {
   val defaultSparkVersion = "1.6.0"
