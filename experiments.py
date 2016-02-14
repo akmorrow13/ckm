@@ -31,6 +31,8 @@ def main():
     logging.info('Experiment mode: {0}'.format(exp.get("mode")))
     if (exp.get("mode") == "python"):
         results = python_run(exp)
+    elif (exp.get("mode") == "scala"):
+        results = scala_run(exp)
     print tabulate(results, headers="keys")
 
 def flatten_dict(d, parent_key='', sep='_'):
