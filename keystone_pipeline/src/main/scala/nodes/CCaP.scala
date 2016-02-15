@@ -119,13 +119,13 @@ object CCaP {
               val weight =
               if (gaussianWeights) {
                 val patchDist = math.pow(s - x, 2) + math.pow(b - y, 2)
-                math.exp((-1.0/(blurSigma*blurSigma))*patchDist)
+                math.exp((-0.5/(blurSigma*blurSigma))*patchDist)
               } else {
                 1.0
               }
               val patchNorm = patchNorms(s + b*resWidth)
               val pix =  convRes(s + b*resWidth, c)
-              val outvar =  weight * patchNorm * math.cos(pix) + phase(c)
+              val outvar =  weight * patchNorm * math.cos(pix + phase(c))
               val pos_position = c + output_offset
               patch(pos_position) += outvar
               b = b + 1
