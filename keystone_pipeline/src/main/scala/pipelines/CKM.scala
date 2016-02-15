@@ -4,10 +4,10 @@ import breeze.stats.distributions._
 import breeze.linalg._
 import breeze.numerics._
 import evaluation.MulticlassClassifierEvaluator
-import loaders.{CifarLoader, MnistLoader, SmallMnistLoader}
+import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import workflow.Transformer
-import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator}
+import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator}
 import nodes.stats.{StandardScaler, Sampler}
 import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier} 
 
@@ -41,11 +41,39 @@ object CKM extends Serializable with Logging {
     var convKernel: Pipeline[Image, Image] = new Identity()
     var numInputFeatures = numChannels
 
-      implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
-      val gaussian = new Gaussian(0, 1)
-      val uniform = new Uniform(0, 1)
+    implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
+    val gaussian = new Gaussian(0, 1)
+    val uniform = new Uniform(0, 1)
 
-    for (i <- 0 until conf.layers) {
+    // Whiten top level
+    val patchExtractor = new Windower(1, conf.patch_sizes(0))
+                                            .andThen(ImageVectorizer.apply)
+                                            .andThen(new Sampler(100000))
+    val baseFilters = patchExtractor(data.train.map(_.image))
+    val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
+    val patchNorms = norm(baseFilterMat:+ 1e-12, Axis._1)
+    val normalizedFilterMat = baseFilterMat(::, *) :/ patchNorms
+    println(s"Mean is (before ccap) ${sum(patchNorms)/patchNorms.size}")
+    //val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
+    // maybe normalize here?
+
+    val whitener = new ZCAWhitenerEstimator().fitSingle(normalizedFilterMat)
+    val rows = whitener.whitener.rows
+    val cols = whitener.whitener.cols
+
+    println(s"Whitener Rows :${rows}, Cols: ${cols}")
+
+    var numOutputFeatures = conf.filters(0)
+    val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
+    val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, gaussian) :* conf.bandwidth(0)
+    val b = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
+    val ccap = new CCaP(W, b, currX, currY, numInputFeatures, 2, 2, None)
+    convKernel = convKernel andThen ccap
+    currX = ccap.outX
+    currY = ccap.outY
+    numInputFeatures = numOutputFeatures
+
+    for (i <- 1 until conf.layers) {
 
       var numOutputFeatures = conf.filters(i)
       val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
@@ -61,7 +89,7 @@ object CKM extends Serializable with Logging {
     }
 
     val meta = data.train.take(1)(0).image.metadata
-    val featurizer = ImageExtractor andThen ImageVectorizer  andThen Transformer[DenseVector[Double], Image](x => ChannelMajorArrayVectorizedImage(x.toArray, meta)) andThen  convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
+    val featurizer = ImageExtractor  andThen convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
     val XTrain = featurizer(data.train)
     val count = XTrain.count()
@@ -72,9 +100,13 @@ object CKM extends Serializable with Logging {
     val yTrain = labelVectorizer(LabelExtractor(data.train))
     val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
     val numFeatures = XTrain.take(1)(0).size
-    println(s"numFeatures: ${numFeatures}, count: ${count}")
+    val blockSize = conf.blockSize
+
+    println(s"numFeatures: ${numFeatures}, count: ${count}, blockSize: ${blockSize}")
     println(data.train.take(1)(0).label)
-    val model = new BlockWeightedLeastSquaresEstimator(numFeatures, 1, conf.reg, 0.5).fit(XTrain, yTrain)
+
+
+    val model = new BlockWeightedLeastSquaresEstimator(blockSize, 1, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
     val clf = model andThen MaxClassifier
 
     val yTrainPred = clf.apply(XTrain)
@@ -110,8 +142,8 @@ object CKM extends Serializable with Logging {
   def loadData(sc: SparkContext, dataset: String):Dataset = {
     val (train, test) =
     if (dataset == "cifar") {
-      val train = CifarLoader(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_train.bin")
-      val test = CifarLoader(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
+      val train = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_train.bin")
+      val test = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
       (train, test)
     } else if (dataset == "mnist") {
       val train = MnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist", 10, "train").cache
@@ -139,9 +171,12 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  filters: Array[Int] = Array(1)
     @BeanProperty var  bandwidth : Array[Double] = Array(1.8)
     @BeanProperty var  patch_sizes: Array[Int] = Array(5)
-    @BeanProperty var  loss: String = "softmax"
+    @BeanProperty var  loss: String = "WeightedLeastSquares"
     @BeanProperty var  reg: Double = 0.001
     @BeanProperty var  numClasses: Int = 10
+    @BeanProperty var  yarn: Boolean = true
+    @BeanProperty var  solverWeight: Double = 0
+    @BeanProperty var  blockSize: Int = 4000
   }
 
 
@@ -171,6 +206,7 @@ object CKM extends Serializable with Logging {
       Logger.getLogger("akka").setLevel(Level.WARN)
       conf.setIfMissing("spark.master", "local[16]")
       conf.set("spark.driver.maxResultSize", "0")
+      conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
       run(sc, appConfig)
       sc.stop()

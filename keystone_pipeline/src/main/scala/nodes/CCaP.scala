@@ -6,6 +6,7 @@ import org.apache.spark.rdd.RDD
 import pipelines._
 import utils.{ChannelMajorArrayVectorizedImage, ImageMetadata, _}
 import workflow.Transformer
+import nodes.learning.ZCAWhitener
 
 /**
  * Convolve Cosine and Pool (CCaP)
@@ -28,7 +29,8 @@ class CCaP(
     imgHeight: Int,
     imgChannels: Int,
     stride: Int,
-    poolSize: Int)
+    poolSize: Int,
+    whitener: Option[ZCAWhitener] = None)
   extends Transformer[Image, Image] {
   val convSize = math.sqrt(filters.cols/imgChannels).toInt
   val convolutions = filters.t
@@ -47,7 +49,7 @@ class CCaP(
   val convolutionsBroadcast = in.sparkContext.broadcast(convolutions)
   val phaseBroadcast = in.sparkContext.broadcast(phase)
 
-    in.mapPartitions(CCaP.convolvePartitions(_, resWidth, resHeight, imgChannels, stride, poolSize, convSize, convolutionsBroadcast.value, phaseBroadcast.value))
+    in.mapPartitions(CCaP.convolvePartitions(_, resWidth, resHeight, imgChannels, stride, poolSize, convSize, convolutionsBroadcast.value, phaseBroadcast.value, whitener))
   }
 
   def apply(in: Image): Image = {
@@ -68,12 +70,15 @@ object CCaP {
       poolSize: Int,
       convSize: Int,
       convolutions: DenseMatrix[Double],
-      phase: DenseVector[Double]): Image = {
+      phase: DenseVector[Double],
+      whitener: Option[ZCAWhitener] = None
+      ): Image = {
 
     val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize)
 
     val patchNorms = norm(imgMat :+ 1e-12, Axis._1)
     val normalizedPatches = imgMat(::, *) :/ patchNorms
+    println(s"Mean is (in ccap) ${sum(patchNorms)/patchNorms.size}")
     /*
     println("CONVOLUTION SIZE IS " + convSize)
     println("RES WIDTH IS " + resWidth)
@@ -83,7 +88,11 @@ object CCaP {
     println(s"PATCH SHAPE ${normalizedPatches.rows}, ${normalizedPatches.cols}")
     println(s"CONVOLUTION SHAPE ${convolutions.rows}, ${convolutions.cols}")
     */
-    val convRes: DenseMatrix[Double] = (normalizedPatches * convolutions)
+    val convRes  = whitener match  {
+      case None => normalizedPatches * convolutions
+      case Some(whitener) => whitener(normalizedPatches) * convolutions
+    }
+
     val xDim = resWidth
     val yDim = resHeight
     val numSourceChannels = convolutions.cols
@@ -154,7 +163,9 @@ object CCaP {
       resWidth: Int,
       resHeight: Int,
       imgChannels: Int,
-      convSize: Int): DenseMatrix[Double] = {
+      convSize: Int,
+      whitener: Option[ZCAWhitener] = None
+      ): DenseMatrix[Double] = {
     var x,y,chan,pox,poy,py,px = 0
 
     x = 0
@@ -193,10 +204,11 @@ object CCaP {
       poolSize: Int,
       convSize: Int,
       convolutions: DenseMatrix[Double],
-      phase: DenseVector[Double]): Iterator[Image] = {
+      phase: DenseVector[Double],
+      whitener: Option[ZCAWhitener] = None): Iterator[Image] = {
 
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
     imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, stride, poolSize, convSize,
-      convolutions, phase))
+      convolutions, phase, whitener))
   }
 }
