@@ -67,9 +67,8 @@ object CKM extends Serializable with Logging {
 
       numOutputFeatures = conf.filters(0)
       val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
-      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, gaussian) :* conf.bandwidth(0)
-      val b = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
-      val ccap = new CCaP(W, b, currX, currY, numInputFeatures, conf.pool(0), conf.pool(0), Some(whitener))
+      val seed = conf.seed
+      val ccap = new RCCaP(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, conf.pool(0), conf.pool(0), Some(whitener))
       convKernel = convKernel andThen ccap
       currX = ccap.outX
       currY = ccap.outY
@@ -82,10 +81,8 @@ object CKM extends Serializable with Logging {
     for (i <- startLayer until conf.layers) {
       numOutputFeatures = conf.filters(i)
       val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
-      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, gaussian) :* conf.bandwidth(i)
-      println(W.size)
-      val b = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
-      val ccap = new CCaP(W, b, currX, currY, numInputFeatures, conf.pool(i), conf.pool(i))
+      val seed = conf.seed + i
+      val ccap = new RCCaP(numInputFeatures*patchSize, numOutputFeatures, seed, conf.bandwidth(i), currX, currY, numInputFeatures, conf.pool(i), conf.pool(i))
       convKernel = convKernel andThen ccap
       currX = ccap.outX
       currY = ccap.outY
@@ -94,16 +91,6 @@ object CKM extends Serializable with Logging {
     val outFeatures = currX * currY * numOutputFeatures
     val meta = data.train.take(1)(0).image.metadata
     val first_pixel = data.train.take(1)(0).image.get(0,0,0)
-   val randomFeatures = Pipeline.gather {
-    Seq.fill(conf.numBlocks) {
-          SeededCosineRandomFeatures(
-            outFeatures,
-            5000,
-            0.00001,
-            23)
-        }
-      } andThen VectorCombiner() andThen new Cacher[DenseVector[Double]]
-
     println(s"First Pixel: ${first_pixel}")
     val featurizer1 = ImageExtractor  andThen convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
@@ -116,11 +103,6 @@ object CKM extends Serializable with Logging {
     val blockSize = conf.blockSize
     println(s"numFeatures: ${numFeatures}, count: ${count}, blockSize: ${blockSize}")
 
-    XTrain = randomFeatures(XTrain)
-    XTest = randomFeatures(XTest)
-
-    XTrain.count()
-    XTest.count()
     val labelVectorizer = ClassLabelIndicatorsFromIntLabels(conf.numClasses)
 
     val yTrain = labelVectorizer(LabelExtractor(data.train))
@@ -202,7 +184,7 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  solverWeight: Double = 0
     @BeanProperty var  blockSize: Int = 4000
     @BeanProperty var  numBlocks: Int = 2
-    @BeanProperty var  numIters: Int = 1
+    @BeanProperty var  numIters: Int = 2
     @BeanProperty var  whiten: Boolean = false
     @BeanProperty var  pool: Array[Int] = Array(2)
   }
