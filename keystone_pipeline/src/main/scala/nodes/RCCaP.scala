@@ -52,9 +52,16 @@ class RCCaP(
   }
 
   def apply(in: Image): Image = {
+
+      implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(seed)))
+    val gaussian = new Gaussian(0, 1)
+    val uniform = new Uniform(0, 1)
+    val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
+    val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
+
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
     val image = RCCaP.convolve(in, patchMat, resWidth, resHeight,
-      imgChannels, stride, poolSize, convSize, whitener, numInputFeatures, numOutputFeatures, seed, bandwidth)
+      imgChannels, stride, poolSize, convSize, whitener, convolutions, phase)
     image
   }
 }
@@ -69,17 +76,9 @@ object RCCaP {
       poolSize: Int,
       convSize: Int,
       whitener: Option[ZCAWhitener] = None,
-      numInputFeatures: Int,
-      numOutputFeatures: Int,
-      seed: Int,
-      bandwidth: Double
+      convolutions: DenseMatrix[Double],
+      phase: DenseVector[Double]
       ): Image = {
-
-      implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(seed)))
-    val gaussian = new Gaussian(0, 1)
-    val uniform = new Uniform(0, 1)
-    val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
-    val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
 
     val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize)
     val whitenedImage =
@@ -222,6 +221,13 @@ object RCCaP {
       ): Iterator[Image] = {
 
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
-    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, stride, poolSize, convSize, whitener, numInputFeatures, numOutputFeatures, seed, bandwidth))
+
+      implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(seed)))
+    val gaussian = new Gaussian(0, 1)
+    val uniform = new Uniform(0, 1)
+    val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
+    val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
+
+    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, stride, poolSize, convSize, whitener, convolutions, phase))
   }
 }
