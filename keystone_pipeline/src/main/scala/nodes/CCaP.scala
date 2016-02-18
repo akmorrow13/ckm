@@ -75,10 +75,19 @@ object CCaP {
       ): Image = {
 
     val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize)
+    val whitenedImage =
+    whitener match  {
+      case None => {
+        imgMat
+      }
+      case Some(whitener) => {
+        whitener(imgMat)
+      }
+    }
 
-    val patchNorms = norm(imgMat :+ 1e-12, Axis._1)
-    val normalizedPatches = imgMat(::, *) :/ patchNorms
-    println(s"Mean is (in ccap) ${sum(patchNorms)/patchNorms.size}")
+    val patchNorms = norm(whitenedImage :+ 1e-12, Axis._1)
+    val normalizedPatches = whitenedImage(::, *) :/ patchNorms
+
     /*
     println("CONVOLUTION SIZE IS " + convSize)
     println("RES WIDTH IS " + resWidth)
@@ -88,11 +97,7 @@ object CCaP {
     println(s"PATCH SHAPE ${normalizedPatches.rows}, ${normalizedPatches.cols}")
     println(s"CONVOLUTION SHAPE ${convolutions.rows}, ${convolutions.cols}")
     */
-    val convRes  = whitener match  {
-      case None => normalizedPatches * convolutions
-      case Some(whitener) => whitener(normalizedPatches) * convolutions
-    }
-
+    val convRes =  normalizedPatches * convolutions
     val xDim = resWidth
     val yDim = resHeight
     val numSourceChannels = convolutions.cols
@@ -101,10 +106,9 @@ object CCaP {
 
     val numPoolsX = math.ceil((xDim - strideStart).toDouble / stride).toInt
     val numPoolsY = math.ceil((yDim - strideStart).toDouble / stride).toInt
-    val patch = new Array[Double]( numPoolsX * numPoolsY * numOutChannels)
+    val patch = Array.fill[Double](numPoolsX * numPoolsY * numOutChannels)(0)
     val blurSigma = poolSize/math.sqrt(2)
-    val gaussianWeights = true
-
+    val gaussianWeights = false
 
     // NOTE: While loops in scala are ~10x faster than for loops
     // Start at strideStart in (x, y) and

@@ -3,13 +3,14 @@ package pipelines
 import breeze.stats.distributions._
 import breeze.linalg._
 import breeze.numerics._
+import breeze.stats.mean
 import evaluation.MulticlassClassifierEvaluator
 import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import workflow.Transformer
 import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator}
-import nodes.stats.{StandardScaler, Sampler}
-import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier} 
+import nodes.stats.{StandardScaler, Sampler, SeededCosineRandomFeatures}
+import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier, VectorCombiner} 
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
@@ -44,69 +45,92 @@ object CKM extends Serializable with Logging {
     implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
     val gaussian = new Gaussian(0, 1)
     val uniform = new Uniform(0, 1)
+    var numOutputFeatures = 0
+    val startLayer =
+    if (conf.whiten) {
+      // Whiten top level
+      val patchExtractor = new Windower(1, conf.patch_sizes(0))
+                                              .andThen(ImageVectorizer.apply)
+                                              .andThen(new Sampler(100000))
+      val baseFilters = patchExtractor(data.train.map(_.image))
+      val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
+      val ev = mean(baseFilterMat:*baseFilterMat)
+      val whitener = new ZCAWhitenerEstimator(0.1*ev).fitSingle(baseFilterMat)
+      val whitenedBase = whitener(baseFilterMat)
+      val patchNorms = norm(whitenedBase :+ 1e-12, Axis._1)
+      val normalizedPatches = whitenedBase(::, *) :/ patchNorms
 
-    // Whiten top level
-    val patchExtractor = new Windower(1, conf.patch_sizes(0))
-                                            .andThen(ImageVectorizer.apply)
-                                            .andThen(new Sampler(100000))
-    val baseFilters = patchExtractor(data.train.map(_.image))
-    val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
-    val patchNorms = norm(baseFilterMat:+ 1e-12, Axis._1)
-    val normalizedFilterMat = baseFilterMat(::, *) :/ patchNorms
-    println(s"Mean is (before ccap) ${sum(patchNorms)/patchNorms.size}")
-    //val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
-    // maybe normalize here?
+      val rows = whitener.whitener.rows
+      val cols = whitener.whitener.cols
 
-    val whitener = new ZCAWhitenerEstimator().fitSingle(normalizedFilterMat)
-    val rows = whitener.whitener.rows
-    val cols = whitener.whitener.cols
+      println(s"Whitener Rows :${rows}, Cols: ${cols}")
 
-    println(s"Whitener Rows :${rows}, Cols: ${cols}")
-
-    var numOutputFeatures = conf.filters(0)
-    val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
-    val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, gaussian) :* conf.bandwidth(0)
-    val b = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
-    val ccap = new CCaP(W, b, currX, currY, numInputFeatures, 2, 2, None)
-    convKernel = convKernel andThen ccap
-    currX = ccap.outX
-    currY = ccap.outY
-    numInputFeatures = numOutputFeatures
-
-    for (i <- 1 until conf.layers) {
-
-      var numOutputFeatures = conf.filters(i)
-      val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
-      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, gaussian) :* conf.bandwidth(i)
+      numOutputFeatures = conf.filters(0)
+      val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
+      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, gaussian) :* conf.bandwidth(0)
       val b = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
-      val ccap = new CCaP(W, b, currX, currY, numInputFeatures, 2, 2)
+      val ccap = new CCaP(W, b, currX, currY, numInputFeatures, conf.pool(0), conf.pool(0), Some(whitener))
       convKernel = convKernel andThen ccap
-
       currX = ccap.outX
       currY = ccap.outY
-
       numInputFeatures = numOutputFeatures
+      1
+    } else {
+      0
     }
 
+    for (i <- startLayer until conf.layers) {
+      numOutputFeatures = conf.filters(i)
+      val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
+      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, gaussian) :* conf.bandwidth(i)
+      println(W.size)
+      val b = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
+      val ccap = new CCaP(W, b, currX, currY, numInputFeatures, conf.pool(i), conf.pool(i))
+      convKernel = convKernel andThen ccap
+      currX = ccap.outX
+      currY = ccap.outY
+      numInputFeatures = numOutputFeatures
+    }
+    val outFeatures = currX * currY * numOutputFeatures
     val meta = data.train.take(1)(0).image.metadata
-    val featurizer = ImageExtractor  andThen convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
+    val first_pixel = data.train.take(1)(0).image.get(0,0,0)
+   val randomFeatures = Pipeline.gather {
+    Seq.fill(conf.numBlocks) {
+          SeededCosineRandomFeatures(
+            outFeatures,
+            5000,
+            0.00001,
+            23)
+        }
+      } andThen VectorCombiner() andThen new Cacher[DenseVector[Double]]
 
-    val XTrain = featurizer(data.train)
+    println(s"First Pixel: ${first_pixel}")
+    val featurizer1 = ImageExtractor  andThen convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
+
+    var XTrain = featurizer1(data.train)
     val count = XTrain.count()
-    val XTest = featurizer(data.test)
+    var XTest = featurizer1(data.test)
+    XTest.count()
+
+    val numFeatures = XTrain.take(1)(0).size
+    val blockSize = conf.blockSize
+    println(s"numFeatures: ${numFeatures}, count: ${count}, blockSize: ${blockSize}")
+
+    XTrain = randomFeatures(XTrain)
+    XTest = randomFeatures(XTest)
+
+    XTrain.count()
     XTest.count()
     val labelVectorizer = ClassLabelIndicatorsFromIntLabels(conf.numClasses)
 
     val yTrain = labelVectorizer(LabelExtractor(data.train))
     val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
-    val numFeatures = XTrain.take(1)(0).size
-    val blockSize = conf.blockSize
-
-    println(s"numFeatures: ${numFeatures}, count: ${count}, blockSize: ${blockSize}")
     println(data.train.take(1)(0).label)
 
+    val avgEigenValue = (XTrain.map((x:DenseVector[Double]) => mean(x :*  x)).sum()/(1.0*count))
+    println(s"Average EigenValue : ${avgEigenValue}")
 
-    val model = new BlockWeightedLeastSquaresEstimator(blockSize, 1, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
+    val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg * avgEigenValue, conf.solverWeight).fit(XTrain, yTrain)
     val clf = model andThen MaxClassifier
 
     val yTrainPred = clf.apply(XTrain)
@@ -142,8 +166,8 @@ object CKM extends Serializable with Logging {
   def loadData(sc: SparkContext, dataset: String):Dataset = {
     val (train, test) =
     if (dataset == "cifar") {
-      val train = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_train.bin")
-      val test = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
+      val train = CifarLoader(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_train.bin")
+      val test = CifarLoader(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
       (train, test)
     } else if (dataset == "mnist") {
       val train = MnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist", 10, "train").cache
@@ -177,6 +201,10 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  yarn: Boolean = true
     @BeanProperty var  solverWeight: Double = 0
     @BeanProperty var  blockSize: Int = 4000
+    @BeanProperty var  numBlocks: Int = 2
+    @BeanProperty var  numIters: Int = 1
+    @BeanProperty var  whiten: Boolean = false
+    @BeanProperty var  pool: Array[Int] = Array(2)
   }
 
 
