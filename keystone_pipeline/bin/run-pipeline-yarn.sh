@@ -48,9 +48,9 @@ spark-submit \
   --conf spark.mlmatrix.treeBranchingFactor=16 \
   --conf spark.network.timeout=600 \
   --conf spark.executorEnv.OMP_NUM_THREADS=1 \
-  --driver-memory 120g \
+  --driver-memory 200g \
   --conf spark.driver.maxResultSize=0 \
-  --executor-memory 100g \
+  --executor-memory 200g \
   --jars $ASSEMBLYJAR \
   $JARFILE \
   "$@"

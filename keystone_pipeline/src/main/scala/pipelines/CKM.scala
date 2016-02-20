@@ -8,9 +8,9 @@ import evaluation.MulticlassClassifierEvaluator
 import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import workflow.Transformer
-import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator}
+import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator, DenseLBFGSwithL2, SoftMaxDenseGradient}
 import nodes.stats.{StandardScaler, Sampler, SeededCosineRandomFeatures}
-import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier, VectorCombiner} 
+import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier, VectorCombiner}
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
@@ -34,6 +34,9 @@ object CKM extends Serializable with Logging {
 
   def run(sc: SparkContext, conf: CKMConf) {
     val data: Dataset = loadData(sc, conf.dataset)
+    val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" +
+      conf.bandwidth.mkString("-") + "_" + conf.pool.mkString("-") + "_" + conf.filters.mkString("-")
+
 
     val (xDim, yDim, numChannels) = getInfo(data)
     var currX = xDim
@@ -107,42 +110,52 @@ object CKM extends Serializable with Logging {
 
     val yTrain = labelVectorizer(LabelExtractor(data.train))
     val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
-    println(data.train.take(1)(0).label)
+    if (conf.saveFeatures) {
+      println("Saving Features")
+      XTrain.map(_.toArray).zip(yTrain).saveAsTextFile(s"/ckn_${feature_id}_train_features")
+      XTest.map(_.toArray).zip(yTest).saveAsTextFile(s"/ckn_${feature_id}_test_features")
+    }
 
     val avgEigenValue = (XTrain.map((x:DenseVector[Double]) => mean(x :*  x)).sum()/(1.0*count))
     println(s"Average EigenValue : ${avgEigenValue}")
+    if (conf.solve) {
+      if (conf.loss == "WeightedLeastSquares") {
+        val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg * avgEigenValue, conf.solverWeight).fit(XTrain, yTrain)
+        val clf = model andThen MaxClassifier
 
-    val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg * avgEigenValue, conf.solverWeight).fit(XTrain, yTrain)
-    val clf = model andThen MaxClassifier
+        val yTrainPred = clf.apply(XTrain)
+        val yTestPred =  clf.apply(XTest)
 
-    val yTrainPred = clf.apply(XTrain)
-    val yTestPred =  clf.apply(XTest)
+        val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), 10)
+        val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), 10)
+        println(s"total training accuracy ${1 - trainEval.totalError}")
+        println(s"total testing accuracy ${1 - testEval.totalError}")
 
-    val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), 10)
-    val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), 10)
-    println(s"total training accuracy ${1 - trainEval.totalError}")
-    println(s"total testing accuracy ${1 - testEval.totalError}")
+        val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
+        val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
 
-    val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
-    val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
+        val trainPredictions = model(XTrain)
+        trainPredictions.zip(LabelExtractor(data.train)).map {
+            case (weights, label) => s"$label," + weights.toArray.mkString(",")
+          }.collect().foreach{x =>
+            out_train.write(x)
+            out_train.write("\n")
+          }
+          out_train.close()
 
-    val trainPredictions = model(XTrain)
-    trainPredictions.zip(LabelExtractor(data.train)).map {
-        case (weights, label) => s"$label," + weights.toArray.mkString(",")
-      }.collect().foreach{x =>
-        out_train.write(x)
-        out_train.write("\n")
+        val testPredictions = model(XTest)
+        testPredictions.zip(LabelExtractor(data.test)).map {
+            case (weights, label) => s"$label," + weights.toArray.mkString(",")
+          }.collect().foreach{x =>
+            out_test.write(x)
+            out_test.write("\n")
+          }
+          out_test.close()
+        } else if (conf.loss == "softmax") {
+          println("RUNNING SOFTMAX")
+          /* NOT IMPLEMENTED */
+        }
       }
-      out_train.close()
-
-    val testPredictions = model(XTest)
-    testPredictions.zip(LabelExtractor(data.test)).map {
-        case (weights, label) => s"$label," + weights.toArray.mkString(",")
-      }.collect().foreach{x =>
-        out_test.write(x)
-        out_test.write("\n")
-      }
-      out_test.close()
   }
 
   def loadData(sc: SparkContext, dataset: String):Dataset = {
@@ -186,6 +199,8 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  numBlocks: Int = 2
     @BeanProperty var  numIters: Int = 2
     @BeanProperty var  whiten: Boolean = false
+    @BeanProperty var  solve: Boolean = true
+    @BeanProperty var  saveFeatures: Boolean = false
     @BeanProperty var  pool: Array[Int] = Array(2)
   }
 

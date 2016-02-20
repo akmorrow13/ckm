@@ -34,7 +34,8 @@ def main():
         results = python_run(exp)
     elif (exp.get("mode") == "scala"):
         results = scala_run(exp, args.config)
-    print tabulate(results, headers="keys")
+    if (results):
+        print tabulate(results, headers="keys")
 
 def flatten_dict(d, parent_key='', sep='_'):
 
@@ -104,14 +105,16 @@ def scala_run(exp, yaml_path):
 
     if p.returncode != 0:
         raise Exception("invocation terminated with non-zero exit status")
-
-    y_train, y_train_weights  = load_scala_results("/tmp/ckm_train_results")
-    y_test, y_test_weights  = load_scala_results("/tmp/ckm_test_results")
-    # TODO: Do more interesting things here
-    y_train_pred = np.argmax(y_train_weights, axis=1)
-    y_test_pred = np.argmax(y_test_weights, axis=1)
-    results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
-    return results
+    if (exp["solve"]):
+        y_train, y_train_weights  = load_scala_results("/tmp/ckm_train_results")
+        y_test, y_test_weights  = load_scala_results("/tmp/ckm_test_results")
+        # TODO: Do more interesting things here
+        y_train_pred = np.argmax(y_train_weights, axis=1)
+        y_test_pred = np.argmax(y_test_weights, axis=1)
+        results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
+        return results
+    else:
+        return None
 
 
 def gen_features(exp, X_train, X_test, seed):

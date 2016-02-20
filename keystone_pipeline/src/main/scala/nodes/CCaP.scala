@@ -108,7 +108,7 @@ object CCaP {
     val numPoolsY = math.ceil((yDim - strideStart).toDouble / stride).toInt
     val patch = Array.fill[Double](numPoolsX * numPoolsY * numOutChannels)(0)
     val blurSigma = poolSize/math.sqrt(2)
-    val gaussianWeights = false
+    val gaussianWeights = true
 
     // NOTE: While loops in scala are ~10x faster than for loops
     // Start at strideStart in (x, y) and
