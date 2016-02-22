@@ -5,6 +5,7 @@ from yaml import load, dump
 import features_pb2
 from pandas import DataFrame
 from ckm import *
+import glob 
 
 import logging
 import collections
@@ -160,9 +161,25 @@ def load_scala_results(name):
     weights = results[:, 1:]
     return labels, weights
 
+def load_all_features_from_dir(dirname):
+    files = glob.glob(dirname + "/part*")
+    all_features = []
+    all_labels = []
+    i = 1
+    for f in files:
+        print "Part {0}".format(i)
+        features, labels = load_features_from_text(f)
+        all_features.extend(features)
+        all_labels.extend(labels)
+        i += 1
+    return np.array(all_features), np.array(all_labels)
 
 
-
+def load_features_from_text(fname):
+    x_tuples = open(fname).readlines()
+    x = map(lambda x: (map(lambda y: float(y), (x[1:-2].split(",")[:-1])), float(x[1:-2].split(",")[-1])), x_tuples)
+    features, labels = zip(*x)
+    return features, labels
 
 
 def compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred):
@@ -196,7 +213,7 @@ def solve(exp, X_train, y_train, X_test, y_test, seed):
     reg = exp["reg"]
     verbose = exp["verbose"]
     if (loss == "softmax"):
-        y_train_pred, y_test_pred = softmax(X_train, y_train, X_test, y_test, reg, verbose=True)
+        y_train_pred, y_test_pred = softmax_block_gn(X_train, y_train, X_test, y_test, reg, verbose=True)
     else:
         clf = SGDClassifier(loss=loss, random_state=RANDOM_STATE, alpha=reg, verbose=int(verbose))
         clf.fit(X_train, y_train)
