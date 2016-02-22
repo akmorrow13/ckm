@@ -34,7 +34,7 @@ def main():
         results = python_run(exp)
     elif (exp.get("mode") == "scala"):
         results = scala_run(exp, args.config)
-    if (results):
+    if (not (results is None)):
         print tabulate(results, headers="keys")
 
 def flatten_dict(d, parent_key='', sep='_'):
