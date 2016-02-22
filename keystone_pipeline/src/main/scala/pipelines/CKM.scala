@@ -3,13 +3,14 @@ package pipelines
 import breeze.stats.distributions._
 import breeze.linalg._
 import breeze.numerics._
+import breeze.stats.mean
 import evaluation.MulticlassClassifierEvaluator
-import loaders.{CifarLoader, MnistLoader, SmallMnistLoader}
+import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import workflow.Transformer
-import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator}
-import nodes.stats.{StandardScaler, Sampler}
-import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier} 
+import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator, DenseLBFGSwithL2, SoftMaxDenseGradient}
+import nodes.stats.{StandardScaler, Sampler, SeededCosineRandomFeatures}
+import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier, VectorCombiner}
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.rdd.RDD
@@ -33,6 +34,9 @@ object CKM extends Serializable with Logging {
 
   def run(sc: SparkContext, conf: CKMConf) {
     val data: Dataset = loadData(sc, conf.dataset)
+    val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" +
+      conf.bandwidth.mkString("-") + "_" + conf.pool.mkString("-") + "_" + conf.filters.mkString("-")
+
 
     val (xDim, yDim, numChannels) = getInfo(data)
     var currX = xDim
@@ -41,70 +45,117 @@ object CKM extends Serializable with Logging {
     var convKernel: Pipeline[Image, Image] = new Identity()
     var numInputFeatures = numChannels
 
-      implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
-      val gaussian = new Gaussian(0, 1)
-      val uniform = new Uniform(0, 1)
+    implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
+    val gaussian = new Gaussian(0, 1)
+    val uniform = new Uniform(0, 1)
+    var numOutputFeatures = 0
+    val startLayer =
+    if (conf.whiten) {
+      // Whiten top level
+      val patchExtractor = new Windower(1, conf.patch_sizes(0))
+                                              .andThen(ImageVectorizer.apply)
+                                              .andThen(new Sampler(100000))
+      val baseFilters = patchExtractor(data.train.map(_.image))
+      val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
+      val ev = mean(baseFilterMat:*baseFilterMat)
+      val whitener = new ZCAWhitenerEstimator(0.1*ev).fitSingle(baseFilterMat)
+      val whitenedBase = whitener(baseFilterMat)
+      val patchNorms = norm(whitenedBase :+ 1e-12, Axis._1)
+      val normalizedPatches = whitenedBase(::, *) :/ patchNorms
 
-    for (i <- 0 until conf.layers) {
+      val rows = whitener.whitener.rows
+      val cols = whitener.whitener.cols
 
-      var numOutputFeatures = conf.filters(i)
-      val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
-      val W = DenseMatrix.rand(numOutputFeatures, numInputFeatures*patchSize, gaussian) :* conf.bandwidth(i)
-      val b = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
-      val ccap = new CCaP(W, b, currX, currY, numInputFeatures, 2, 2)
+      println(s"Whitener Rows :${rows}, Cols: ${cols}")
+
+      numOutputFeatures = conf.filters(0)
+      val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
+      val seed = conf.seed
+      val ccap = new RCCaP(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, conf.pool(0), conf.pool(0), Some(whitener))
       convKernel = convKernel andThen ccap
-
       currX = ccap.outX
       currY = ccap.outY
-
       numInputFeatures = numOutputFeatures
+      1
+    } else {
+      0
     }
 
+    for (i <- startLayer until conf.layers) {
+      numOutputFeatures = conf.filters(i)
+      val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
+      val seed = conf.seed + i
+      val ccap = new RCCaP(numInputFeatures*patchSize, numOutputFeatures, seed, conf.bandwidth(i), currX, currY, numInputFeatures, conf.pool(i), conf.pool(i))
+      convKernel = convKernel andThen ccap
+      currX = ccap.outX
+      currY = ccap.outY
+      numInputFeatures = numOutputFeatures
+    }
+    val outFeatures = currX * currY * numOutputFeatures
     val meta = data.train.take(1)(0).image.metadata
-    val featurizer = ImageExtractor andThen ImageVectorizer  andThen Transformer[DenseVector[Double], Image](x => ChannelMajorArrayVectorizedImage(x.toArray, meta)) andThen  convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
+    val first_pixel = data.train.take(1)(0).image.get(0,0,0)
+    println(s"First Pixel: ${first_pixel}")
+    val featurizer1 = ImageExtractor  andThen convKernel andThen ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
-    val XTrain = featurizer(data.train)
+    var XTrain = featurizer1(data.train)
     val count = XTrain.count()
-    val XTest = featurizer(data.test)
+    var XTest = featurizer1(data.test)
     XTest.count()
+
+    val numFeatures = XTrain.take(1)(0).size
+    val blockSize = conf.blockSize
+    println(s"numFeatures: ${numFeatures}, count: ${count}, blockSize: ${blockSize}")
+
     val labelVectorizer = ClassLabelIndicatorsFromIntLabels(conf.numClasses)
 
     val yTrain = labelVectorizer(LabelExtractor(data.train))
     val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
-    val numFeatures = XTrain.take(1)(0).size
-    println(s"numFeatures: ${numFeatures}, count: ${count}")
-    println(data.train.take(1)(0).label)
-    val model = new BlockWeightedLeastSquaresEstimator(numFeatures, 1, conf.reg, 0.5).fit(XTrain, yTrain)
-    val clf = model andThen MaxClassifier
+    if (conf.saveFeatures) {
+      println("Saving Features")
+      XTrain.map(_.toArray).zip(yTrain).saveAsTextFile(s"/ckn_${feature_id}_train_features")
+      XTest.map(_.toArray).zip(yTest).saveAsTextFile(s"/ckn_${feature_id}_test_features")
+    }
 
-    val yTrainPred = clf.apply(XTrain)
-    val yTestPred =  clf.apply(XTest)
+    val avgEigenValue = (XTrain.map((x:DenseVector[Double]) => mean(x :*  x)).sum()/(1.0*count))
+    println(s"Average EigenValue : ${avgEigenValue}")
+    if (conf.solve) {
+      if (conf.loss == "WeightedLeastSquares") {
+        val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg * avgEigenValue, conf.solverWeight).fit(XTrain, yTrain)
+        val clf = model andThen MaxClassifier
 
-    val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), 10)
-    val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), 10)
-    println(s"total training accuracy ${1 - trainEval.totalError}")
-    println(s"total testing accuracy ${1 - testEval.totalError}")
+        val yTrainPred = clf.apply(XTrain)
+        val yTestPred =  clf.apply(XTest)
 
-    val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
-    val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
+        val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), 10)
+        val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), 10)
+        println(s"total training accuracy ${1 - trainEval.totalError}")
+        println(s"total testing accuracy ${1 - testEval.totalError}")
 
-    val trainPredictions = model(XTrain)
-    trainPredictions.zip(LabelExtractor(data.train)).map {
-        case (weights, label) => s"$label," + weights.toArray.mkString(",")
-      }.collect().foreach{x =>
-        out_train.write(x)
-        out_train.write("\n")
+        val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
+        val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
+
+        val trainPredictions = model(XTrain)
+        trainPredictions.zip(LabelExtractor(data.train)).map {
+            case (weights, label) => s"$label," + weights.toArray.mkString(",")
+          }.collect().foreach{x =>
+            out_train.write(x)
+            out_train.write("\n")
+          }
+          out_train.close()
+
+        val testPredictions = model(XTest)
+        testPredictions.zip(LabelExtractor(data.test)).map {
+            case (weights, label) => s"$label," + weights.toArray.mkString(",")
+          }.collect().foreach{x =>
+            out_test.write(x)
+            out_test.write("\n")
+          }
+          out_test.close()
+        } else if (conf.loss == "softmax") {
+          println("RUNNING SOFTMAX")
+          /* NOT IMPLEMENTED */
+        }
       }
-      out_train.close()
-
-    val testPredictions = model(XTest)
-    testPredictions.zip(LabelExtractor(data.test)).map {
-        case (weights, label) => s"$label," + weights.toArray.mkString(",")
-      }.collect().foreach{x =>
-        out_test.write(x)
-        out_test.write("\n")
-      }
-      out_test.close()
   }
 
   def loadData(sc: SparkContext, dataset: String):Dataset = {
@@ -139,9 +190,18 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  filters: Array[Int] = Array(1)
     @BeanProperty var  bandwidth : Array[Double] = Array(1.8)
     @BeanProperty var  patch_sizes: Array[Int] = Array(5)
-    @BeanProperty var  loss: String = "softmax"
+    @BeanProperty var  loss: String = "WeightedLeastSquares"
     @BeanProperty var  reg: Double = 0.001
     @BeanProperty var  numClasses: Int = 10
+    @BeanProperty var  yarn: Boolean = true
+    @BeanProperty var  solverWeight: Double = 0
+    @BeanProperty var  blockSize: Int = 4000
+    @BeanProperty var  numBlocks: Int = 2
+    @BeanProperty var  numIters: Int = 2
+    @BeanProperty var  whiten: Boolean = false
+    @BeanProperty var  solve: Boolean = true
+    @BeanProperty var  saveFeatures: Boolean = false
+    @BeanProperty var  pool: Array[Int] = Array(2)
   }
 
 
@@ -171,6 +231,7 @@ object CKM extends Serializable with Logging {
       Logger.getLogger("akka").setLevel(Level.WARN)
       conf.setIfMissing("spark.master", "local[16]")
       conf.set("spark.driver.maxResultSize", "0")
+      conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
       run(sc, appConfig)
       sc.stop()

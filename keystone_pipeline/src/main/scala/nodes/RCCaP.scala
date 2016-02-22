@@ -7,10 +7,13 @@ import pipelines._
 import utils.{ChannelMajorArrayVectorizedImage, ImageMetadata, _}
 import workflow.Transformer
 import nodes.learning.ZCAWhitener
+import breeze.stats.distributions._
+import org.apache.commons.math3.random.MersenneTwister
 
 /**
- * Convolve Cosine and Pool (CCaP)
- * Convolves images with a bank of convolution filters. Convolution filters must be square.
+ * Random Convolve Cosine and Pool (RCCaP)
+ * Convolves images with a bank of random filters
+ * Entropy is passed in as seed
  * Used for using the same label for all patches from an image. Then apply a Cosine non linearity and sum pool
  * in one implementation
  *
@@ -18,13 +21,14 @@ import nodes.learning.ZCAWhitener
  *  * During the convolution, every overlapping k x k image patch is normalized to have unit norm
  *  * After the convolution and non linearity the norms are multiplied back
  *
- * @param filters Bank of convolution filters to apply - each filter is an array in row-major order.
  * @param imgWidth Width of images in pixels.
  * @param imgHeight Height of images in pixels.
  */
-class CCaP(
-    filters: DenseMatrix[Double],
-    phase: DenseVector[Double],
+class RCCaP(
+    numInputFeatures: Int,
+    numOutputFeatures: Int,
+    seed: Int,
+    bandwidth: Double,
     imgWidth: Int,
     imgHeight: Int,
     imgChannels: Int,
@@ -32,11 +36,9 @@ class CCaP(
     poolSize: Int,
     whitener: Option[ZCAWhitener] = None)
   extends Transformer[Image, Image] {
-  val convSize = math.sqrt(filters.cols/imgChannels).toInt
-  val convolutions = filters.t
+  val convSize = math.sqrt(numInputFeatures/imgChannels).toInt
   val resWidth = imgWidth - convSize + 1
   val resHeight = imgHeight - convSize + 1
-
 
   val strideStart = poolSize / 2
 
@@ -46,21 +48,25 @@ class CCaP(
 
 
   override def apply(in: RDD[Image]): RDD[Image] = {
-  val convolutionsBroadcast = in.sparkContext.broadcast(convolutions)
-  val phaseBroadcast = in.sparkContext.broadcast(phase)
-
-    in.mapPartitions(CCaP.convolvePartitions(_, resWidth, resHeight, imgChannels, stride, poolSize, convSize, convolutionsBroadcast.value, phaseBroadcast.value, whitener))
+    in.mapPartitions(RCCaP.convolvePartitions(_, resWidth, resHeight, imgChannels, stride, poolSize, convSize, whitener, numInputFeatures, numOutputFeatures, seed, bandwidth))
   }
 
   def apply(in: Image): Image = {
+
+      implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(seed)))
+    val gaussian = new Gaussian(0, 1)
+    val uniform = new Uniform(0, 1)
+    val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
+    val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
+
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
-    val image = CCaP.convolve(in, patchMat, resWidth, resHeight,
-      imgChannels, stride, poolSize, convSize, convolutions, phase)
+    val image = RCCaP.convolve(in, patchMat, resWidth, resHeight,
+      imgChannels, stride, poolSize, convSize, whitener, convolutions, phase)
     image
   }
 }
 
-object CCaP {
+object RCCaP {
   def convolve(img: Image,
       patchMat: DenseMatrix[Double],
       resWidth: Int,
@@ -69,9 +75,9 @@ object CCaP {
       stride: Int,
       poolSize: Int,
       convSize: Int,
+      whitener: Option[ZCAWhitener] = None,
       convolutions: DenseMatrix[Double],
-      phase: DenseVector[Double],
-      whitener: Option[ZCAWhitener] = None
+      phase: DenseVector[Double]
       ): Image = {
 
     val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize)
@@ -108,7 +114,7 @@ object CCaP {
     val numPoolsY = math.ceil((yDim - strideStart).toDouble / stride).toInt
     val patch = Array.fill[Double](numPoolsX * numPoolsY * numOutChannels)(0)
     val blurSigma = poolSize/math.sqrt(2)
-    val gaussianWeights = true
+    val gaussianWeights = false
 
     // NOTE: While loops in scala are ~10x faster than for loops
     // Start at strideStart in (x, y) and
@@ -207,12 +213,21 @@ object CCaP {
       stride: Int,
       poolSize: Int,
       convSize: Int,
-      convolutions: DenseMatrix[Double],
-      phase: DenseVector[Double],
-      whitener: Option[ZCAWhitener] = None): Iterator[Image] = {
+      whitener: Option[ZCAWhitener] = None,
+      numInputFeatures: Int,
+      numOutputFeatures: Int,
+      seed: Int,
+      bandwidth: Double
+      ): Iterator[Image] = {
 
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
-    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, stride, poolSize, convSize,
-      convolutions, phase, whitener))
+
+      implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(seed)))
+    val gaussian = new Gaussian(0, 1)
+    val uniform = new Uniform(0, 1)
+    val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
+    val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
+
+    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, stride, poolSize, convSize, whitener, convolutions, phase))
   }
 }

@@ -1,0 +1,27 @@
+# General parameters
+dataset: cifar
+expid: cifar_run
+mode: scala
+seed: 0
+numClasses: 10
+
+# CKM Parameters
+layers: 3
+patch_sizes: [3, 3, 3]
+bandwidth: [1, 1, 1]
+pool: [2, 2, 2]
+filters: [800, 3200, 10000]
+
+# Solver Params
+solve: False
+saveFeatures: True
+loss: WeightedLeastSquares
+reg:  0.01
+yarn: True
+solverWeight: 0.08
+blockSize: 5000
+numBlocks: 20
+numIters: 10
+whiten: True
+
+

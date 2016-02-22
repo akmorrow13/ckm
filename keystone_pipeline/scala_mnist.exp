@@ -1,5 +1,5 @@
 # General parameters
-dataset: mnist_small
+dataset:  mnist_small
 expid: mnist_small_simple
 mode: scala
 seed: 0
@@ -9,10 +9,10 @@ numClasses: 10
 layers: 1
 patch_sizes: [5, 2]
 bandwidth: [1.8, 2.6]
-filters: [50, 400]
+filters: [50, 200]
 
 # Solver Params
 loss: softmax
-reg: 0.0001
+reg: 0.001
 
-
+yarn: True

@@ -30,11 +30,13 @@ def main():
     args = parser.parse_args()
     exp = parse_experiment(args.config)
     logging.info('Experiment mode: {0}'.format(exp.get("mode")))
+    print exp
     if (exp.get("mode") == "python"):
         results = python_run(exp)
     elif (exp.get("mode") == "scala"):
-        results = scala_run(exp)
-    print tabulate(results, headers="keys")
+        results = scala_run(exp, args.config)
+    if (results):
+        print tabulate(results, headers="keys")
 
 def flatten_dict(d, parent_key='', sep='_'):
 
@@ -70,13 +72,10 @@ def python_run(exp):
     results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
     return results
 
-def scala_run(exp):
+def scala_run(exp, yaml_path):
     expid = exp["expid"]
-    config_yaml = "./tests/sample_scala.exp"
+    config_yaml = yaml_path
     env = os.environ.copy()
-    env['KEYSTONE_MEM'] = str('32g')
-    env['SPARK_EXECUTOR_CORES'] = str(32)
-    env['OMP_NUM_THREADS'] = str(1)
     # sanity check before running the process
 
     # if not os.path.isdir(outdir):
@@ -86,20 +85,20 @@ def scala_run(exp):
     # if os.path.exists(logfile) and output_sanity_check:
     #     raise ValueError("output dir has logfile, should be empty")
     pipelineClass="pipelines.CKM"
-    pipelineJar = "/work/vaishaal/ckm/keystone_pipeline/target/scala-2.10/ckm-assembly-0.1.jar"
+    pipelineJar = "/home/eecs/vaishaal/ckm/keystone_pipeline/target/scala-2.10/ckm-assembly-0.1.jar"
     if not os.path.exists(pipelineJar):
         raise ValueError("Cannot find pipeline jar")
 
     # basically capturing the popen output and saving it to disk  and
     # printing it to screen are a multithreaded nightmare, so we let
     # tee do the work for us
-
-    ## pipefail set so that we get the correct process return code
-    cmd = " ".join(["./keystone_pipeline/bin/run-pipeline.sh", pipelineClass,
-                                   pipelineJar, config_yaml])
-
-    print cmd
-    p = subprocess.Popen(" ".join(["./keystone_pipeline/bin/run-pipeline.sh", pipelineClass,
+    yarn = exp.get("yarn")
+    if (yarn):
+        p = subprocess.Popen(" ".join(["./keystone_pipeline/bin/run-pipeline-yarn.sh", pipelineClass,
+                                   pipelineJar, config_yaml]),
+                         shell=True, executable='/bin/bash')
+    else:
+        p = subprocess.Popen(" ".join(["./keystone_pipeline/bin/run-pipeline.sh", pipelineClass,
                                    pipelineJar, config_yaml]),
                          shell=True, executable='/bin/bash')
     #p = subprocess.Popen(cmd, shell=True, executable='/bin/bash', env = env)
@@ -107,14 +106,16 @@ def scala_run(exp):
 
     if p.returncode != 0:
         raise Exception("invocation terminated with non-zero exit status")
-
-    y_train, y_train_weights  = load_scala_results("/tmp/ckm_train_results")
-    y_test, y_test_weights  = load_scala_results("/tmp/ckm_test_results")
-    # TODO: Do more interesting things here
-    y_train_pred = np.argmax(y_train_weights, axis=1)
-    y_test_pred = np.argmax(y_test_weights, axis=1)
-    results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
-    return results
+    if (exp["solve"]):
+        y_train, y_train_weights  = load_scala_results("/tmp/ckm_train_results")
+        y_test, y_test_weights  = load_scala_results("/tmp/ckm_test_results")
+        # TODO: Do more interesting things here
+        y_train_pred = np.argmax(y_train_weights, axis=1)
+        y_test_pred = np.argmax(y_test_weights, axis=1)
+        results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
+        return results
+    else:
+        return None
 
 
 def gen_features(exp, X_train, X_test, seed):
