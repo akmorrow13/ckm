@@ -94,6 +94,7 @@ def softmax_block_gn(X_train, y_train, X_test, y_test, multiplier=1e-2, numiter=
         onehot = lambda x: np.eye(10)[x]
         y_train_hot = np.array(map(onehot, y_train))
         y_test_hot = np.array(map(onehot, y_test))
+        lambdav = multiplier*np.mean(X_train * X_train)
         loss = 0
         print num_blocks
         for e in range(epochs):
@@ -104,7 +105,6 @@ def softmax_block_gn(X_train, y_train, X_test, y_test, multiplier=1e-2, numiter=
                         X_test_block = X_test[:, block_features]
                         w_block = w[:, block_features]
                         gmat = (1.0/X_train_block.shape[0])*(X_train_block.T.dot(X_train_block))
-                        lambdav = multiplier*np.trace(gmat)/gmat.shape[0]
                         gmat = gmat + lambdav*np.eye(gmat.shape[0]);
                         w_full = np.zeros((10, X_train.shape[1]))
                         for k in range(numiter):
@@ -116,7 +116,7 @@ def softmax_block_gn(X_train, y_train, X_test, y_test, multiplier=1e-2, numiter=
                             train_preds = y_train_hot - train_preds
                             grad = (1.0/num_samples)*(X_train_block.T.dot(train_preds).T) - lambdav*w_block # blocksize x 1
                             w_block = w_block + (np.linalg.solve(gmat, grad.T)).T
-                        loss = - np.sum(y_train_hot * np.log(train_preds + 1e-12))
+                        loss = - np.sum(y_train_hot * np.log(train_preds + 1e-10))
                         w[:, block_features] = w_block
                         y_train_pred = np.argmax(w.dot(X_train.T).T, axis=1)
                         y_test_pred = np.argmax(w.dot(X_test.T).T, axis=1)
@@ -124,6 +124,5 @@ def softmax_block_gn(X_train, y_train, X_test, y_test, multiplier=1e-2, numiter=
                         test_acc = metrics.accuracy_score(y_test, y_test_pred)
                         if (verbose):
                                 print "Epoch: {0}, Block: {3}, Loss: {4}, Train Accuracy: {1}, Test Accuracy: {2}".format(e, train_acc, test_acc, b, loss)
-
 
 
