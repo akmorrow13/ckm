@@ -116,8 +116,8 @@ def softmax_block_gn(X_train, y_train, X_test, y_test, multiplier=1e-2, numiter=
                             train_preds = y_train_hot - train_preds
                             grad = (1.0/num_samples)*(X_train_block.T.dot(train_preds).T) - lambdav*w_block # blocksize x 1
                             w_block = w_block + (np.linalg.solve(gmat, grad.T)).T
+                            w[:, block_features] = w_block
                         loss = - np.sum(y_train_hot * np.log(train_preds + 1e-10))
-                        w[:, block_features] = w_block
                         y_train_pred = np.argmax(w.dot(X_train.T).T, axis=1)
                         y_test_pred = np.argmax(w.dot(X_test.T).T, axis=1)
                         train_acc = metrics.accuracy_score(y_train, y_train_pred)
