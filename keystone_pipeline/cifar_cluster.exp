@@ -16,7 +16,7 @@ filters: [1024, 40960, 40000]
 solve: True
 saveFeatures: False
 loss: WeightedLeastSquares
-reg:  0.000001
+reg:  0
 yarn: True
 solverWeight: 0.01
 blockSize:  5000

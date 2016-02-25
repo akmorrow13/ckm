@@ -8,7 +8,7 @@ import evaluation.MulticlassClassifierEvaluator
 import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import workflow.Transformer
-import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator, ZCAWhitener2, ZCAWhitenerEstimator2, DenseLBFGSwithL2, SoftMaxDenseGradient}
+import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator, ZCAWhitener2, ZCAWhitenerEstimator, DenseLBFGSwithL2, SoftMaxDenseGradient}
 import nodes.stats.{StandardScaler, Sampler, SeededCosineRandomFeatures, BroadcastCosineRandomFeatures}
 import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier, VectorCombiner}
 
@@ -67,16 +67,6 @@ object CKM extends Serializable with Logging {
     val cifarFullVectors = ImageVectorizer(data.train.map(_.image)).collect()
     val cifarFullMatrix:DenseMatrix[Double] = MatrixUtils.rowsToMatrix(cifarFullVectors).reshape(50000, 3072)
 
-    val red_matrix:DenseMatrix[Double] = cifarFullMatrix(::, 0 until 1024)
-    val blue_matrix:DenseMatrix[Double] = cifarFullMatrix(::, 1024 until 2048)
-    val green_matrix:DenseMatrix[Double] = cifarFullMatrix(::, 2048 until 3072)
-    println(s"Max: ${max(cifarFullMatrix)}")
-    println(s"Min: ${min(cifarFullMatrix)}")
-    println(mean(red_matrix))
-    println(mean(blue_matrix))
-    println(mean(green_matrix))
-
-    val means = DenseVector(mean(red_matrix), mean(blue_matrix), mean(green_matrix))
     val (xDim, yDim, numChannels) = getInfo(data)
     var currX = xDim
     var currY = yDim
@@ -97,7 +87,7 @@ object CKM extends Serializable with Logging {
       val baseFilters = patchExtractor(data.train.map(_.image))
       val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
       val ev = mean(baseFilterMat:*baseFilterMat)
-      val whitener = new ZCAWhitenerEstimator2(0.01).fitSingle(baseFilterMat)
+      val whitener = new ZCAWhitenerEstimator(0.01).fitSingle(baseFilterMat)
       val whitenedBase = whitener(baseFilterMat)
       val patchNorms = norm(whitenedBase :+ 1e-12, Axis._1)
       val normalizedPatches = whitenedBase(::, *) :/ patchNorms
@@ -120,7 +110,7 @@ object CKM extends Serializable with Logging {
       numOutputFeatures = conf.filters(0)
       val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
       val seed = conf.seed
-      val ccap = new RCCaP(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, conf.pool(0), conf.pool(0), Some(whitener), means)
+      val ccap = new RCCaP(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, conf.pool(0), conf.pool(0), Some(whitener))
       convKernel = convKernel andThen ccap
       currX = ccap.outX
       currY = ccap.outY

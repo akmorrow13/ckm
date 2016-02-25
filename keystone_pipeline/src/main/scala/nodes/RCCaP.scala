@@ -7,7 +7,7 @@ import org.apache.spark.rdd.RDD
 import pipelines._
 import utils.{ChannelMajorArrayVectorizedImage, ImageMetadata, _}
 import workflow.Transformer
-import nodes.learning.ZCAWhitener2
+import nodes.learning.ZCAWhitener
 import breeze.stats.distributions._
 import org.apache.commons.math3.random.MersenneTwister
 
@@ -35,7 +35,7 @@ class RCCaP(
     imgChannels: Int,
     stride: Int,
     poolSize: Int,
-    whitener: Option[ZCAWhitener2] = None,
+    whitener: Option[ZCAWhitener] = None,
     means: DenseVector[Double] =  DenseVector(0,0,0)
     )
   extends Transformer[Image, Image] {
@@ -78,7 +78,7 @@ object RCCaP {
       stride: Int,
       poolSize: Int,
       convSize: Int,
-      whitener: Option[ZCAWhitener2] = None,
+      whitener: Option[ZCAWhitener] = None,
       convolutions: DenseMatrix[Double],
       phase: DenseVector[Double],
       means: DenseVector[Double]
@@ -91,7 +91,7 @@ object RCCaP {
         imgMat
       }
       case Some(whitener) => {
-        imgMat * whitener.whitener
+        whitener(imgMat)
       }
     }
 
@@ -178,7 +178,7 @@ object RCCaP {
       resHeight: Int,
       imgChannels: Int,
       convSize: Int,
-      whitener: Option[ZCAWhitener2] = None,
+      whitener: Option[ZCAWhitener] = None,
       means: DenseVector[Double]
       ): DenseMatrix[Double] = {
     var x,y,chan,pox,poy,py,px = 0
@@ -218,7 +218,7 @@ object RCCaP {
       stride: Int,
       poolSize: Int,
       convSize: Int,
-      whitener: Option[ZCAWhitener2] = None,
+      whitener: Option[ZCAWhitener] = None,
       numInputFeatures: Int,
       numOutputFeatures: Int,
       seed: Int,
