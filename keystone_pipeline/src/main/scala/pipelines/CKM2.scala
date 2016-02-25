@@ -138,13 +138,12 @@ object CKM2 extends Serializable with Logging {
     val meta = data.train.take(1)(0).image.metadata
     val first_pixel = data.train.take(1)(0).image.get(15,7,0)
     println(s"First Pixel: ${first_pixel}")
-    val randomFeatures = CosineRandomFeatures(4096, 40480, 1000.0) andThen new Cacher[DenseVector[Double]]
     val featurizer1 = ImageExtractor  andThen convKernel
     val featurizer2 = ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
 
     println(s"conv kernel output median: ${samplePairwiseMedian(featurizer1(data.train))}")
-    val featurizer = featurizer1 andThen featurizer2 andThen randomFeatures
+    val featurizer = featurizer1 andThen featurizer2
 
     var XTrain = featurizer(data.train)
     val count = XTrain.count()
