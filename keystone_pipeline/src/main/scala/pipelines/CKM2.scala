@@ -85,11 +85,10 @@ object CKM2 extends Serializable with Logging {
                                               .andThen(new Sampler(100000))
       val baseFilters = patchExtractor(data.train.map(_.image))
       val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
-      val ev = mean(baseFilterMat:*baseFilterMat)
-      val whitener = new ZCAWhitenerEstimator(0.01*ev).fitSingle(baseFilterMat)
+      val whitener = new ZCAWhitenerEstimator(conf.whitenerValue).fitSingle(baseFilterMat)
       val whitenedBase = whitener(baseFilterMat)
       val diff_norm_median = pairwiseMedian(whitenedBase)
-      val patchNorms = norm(whitenedBase :+ 1e-12, Axis._1)
+      val patchNorms = norm(whitenedBase :+ conf.whitenerOffset, Axis._1)
       val normalizedPatches = whitenedBase(::, *) :/ patchNorms
       println("gamma is " + 1.0/(diff_norm_median * diff_norm_median))
 
@@ -172,7 +171,7 @@ object CKM2 extends Serializable with Logging {
     println(s"Average EigenValue : ${avgEigenValue}")
     if (conf.solve) {
       if (conf.loss == "WeightedLeastSquares") {
-        val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg * avgEigenValue, conf.solverWeight).fit(XTrain, yTrain)
+        val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
         val clf = model andThen MaxClassifier
 
         val yTrainPred = clf.apply(XTrain)
@@ -251,6 +250,8 @@ object CKM2 extends Serializable with Logging {
     @BeanProperty var  numBlocks: Int = 2
     @BeanProperty var  numIters: Int = 2
     @BeanProperty var  whiten: Boolean = false
+    @BeanProperty var  whitenerValue: Double =  0.1
+    @BeanProperty var  whitenerOffset: Double = 0.001
     @BeanProperty var  solve: Boolean = true
     @BeanProperty var  saveFeatures: Boolean = false
     @BeanProperty var  pool: Array[Int] = Array(2)
