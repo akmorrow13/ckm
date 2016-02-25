@@ -14,7 +14,7 @@ import subprocess
 
 from tabulate import tabulate
 
-from softmax import softmax
+from softmax import *
 
 from sklearn import metrics
 from sklearn.linear_model import SGDClassifier

@@ -1,12 +1,13 @@
 package nodes.images
 
 import breeze.linalg._
+import breeze.numerics._
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import pipelines._
 import utils.{ChannelMajorArrayVectorizedImage, ImageMetadata, _}
 import workflow.Transformer
-import nodes.learning.ZCAWhitener
+import nodes.learning.ZCAWhitener2
 import breeze.stats.distributions._
 import org.apache.commons.math3.random.MersenneTwister
 
@@ -34,7 +35,9 @@ class RCCaP(
     imgChannels: Int,
     stride: Int,
     poolSize: Int,
-    whitener: Option[ZCAWhitener] = None)
+    whitener: Option[ZCAWhitener2] = None,
+    means: DenseVector[Double] =  DenseVector(0,0,0)
+    )
   extends Transformer[Image, Image] {
   val convSize = math.sqrt(numInputFeatures/imgChannels).toInt
   val resWidth = imgWidth - convSize + 1
@@ -48,7 +51,7 @@ class RCCaP(
 
 
   override def apply(in: RDD[Image]): RDD[Image] = {
-    in.mapPartitions(RCCaP.convolvePartitions(_, resWidth, resHeight, imgChannels, stride, poolSize, convSize, whitener, numInputFeatures, numOutputFeatures, seed, bandwidth))
+    in.mapPartitions(RCCaP.convolvePartitions(_, resWidth, resHeight, imgChannels, stride, poolSize, convSize, whitener, numInputFeatures, numOutputFeatures, seed, bandwidth, means))
   }
 
   def apply(in: Image): Image = {
@@ -61,7 +64,7 @@ class RCCaP(
 
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
     val image = RCCaP.convolve(in, patchMat, resWidth, resHeight,
-      imgChannels, stride, poolSize, convSize, whitener, convolutions, phase)
+      imgChannels, stride, poolSize, convSize, whitener, convolutions, phase, means)
     image
   }
 }
@@ -75,19 +78,20 @@ object RCCaP {
       stride: Int,
       poolSize: Int,
       convSize: Int,
-      whitener: Option[ZCAWhitener] = None,
+      whitener: Option[ZCAWhitener2] = None,
       convolutions: DenseMatrix[Double],
-      phase: DenseVector[Double]
+      phase: DenseVector[Double],
+      means: DenseVector[Double]
       ): Image = {
 
-    val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize)
+    val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize, None, means)
     val whitenedImage =
     whitener match  {
       case None => {
         imgMat
       }
       case Some(whitener) => {
-        whitener(imgMat)
+        imgMat * whitener.whitener
       }
     }
 
@@ -114,7 +118,7 @@ object RCCaP {
     val numPoolsY = math.ceil((yDim - strideStart).toDouble / stride).toInt
     val patch = Array.fill[Double](numPoolsX * numPoolsY * numOutChannels)(0)
     val blurSigma = poolSize/math.sqrt(2)
-    val gaussianWeights = false
+    val gaussianWeights = true
 
     // NOTE: While loops in scala are ~10x faster than for loops
     // Start at strideStart in (x, y) and
@@ -138,13 +142,13 @@ object RCCaP {
               val weight =
               if (gaussianWeights) {
                 val patchDist = math.pow(s - x, 2) + math.pow(b - y, 2)
-                math.exp((-0.5/(blurSigma*blurSigma))*patchDist)
+                math.exp((-1/(blurSigma*blurSigma))*patchDist)
               } else {
                 1.0
               }
               val patchNorm = patchNorms(s + b*resWidth)
               val pix =  convRes(s + b*resWidth, c)
-              val outvar =  weight * patchNorm * math.cos(pix + phase(c))
+              val outvar =  weight * patchNorm * cos(pix + phase(c))
               val pos_position = c + output_offset
               patch(pos_position) += outvar
               b = b + 1
@@ -174,7 +178,8 @@ object RCCaP {
       resHeight: Int,
       imgChannels: Int,
       convSize: Int,
-      whitener: Option[ZCAWhitener] = None
+      whitener: Option[ZCAWhitener2] = None,
+      means: DenseVector[Double]
       ): DenseMatrix[Double] = {
     var x,y,chan,pox,poy,py,px = 0
 
@@ -190,7 +195,7 @@ object RCCaP {
               while (chan < imgChannels) {
                 px = chan + pox*imgChannels + poy*imgChannels*convSize
                 py = x + y*resWidth
-                patchMat(py, px) = img.get(x+pox, y+poy, chan)
+                patchMat(py, px) = (img.get(x+pox, y+poy, chan) - means(chan))
                 chan+=1
               }
               pox+=1
@@ -213,11 +218,12 @@ object RCCaP {
       stride: Int,
       poolSize: Int,
       convSize: Int,
-      whitener: Option[ZCAWhitener] = None,
+      whitener: Option[ZCAWhitener2] = None,
       numInputFeatures: Int,
       numOutputFeatures: Int,
       seed: Int,
-      bandwidth: Double
+      bandwidth: Double,
+      means: DenseVector[Double]
       ): Iterator[Image] = {
 
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
@@ -228,6 +234,6 @@ object RCCaP {
     val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
     val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
 
-    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, stride, poolSize, convSize, whitener, convolutions, phase))
+    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, stride, poolSize, convSize, whitener, convolutions, phase, means))
   }
 }

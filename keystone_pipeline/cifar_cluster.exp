@@ -2,26 +2,26 @@
 dataset: cifar
 expid: cifar_run
 mode: scala
-seed: 0
+seed: 5
 numClasses: 10
 
 # CKM Parameters
-layers: 3
-patch_sizes: [3, 3, 3]
-bandwidth: [1, 1, 1]
-pool: [2, 2, 2]
-filters: [800, 3200, 10000]
+layers: 1
+patch_sizes: [5, 2, 3]
+bandwidth: [1, 1.5, 1]
+pool: [14, 1, 2]
+filters: [1024, 40960, 40000]
 
 # Solver Params
-solve: False
-saveFeatures: True
+solve: True
+saveFeatures: False
 loss: WeightedLeastSquares
-reg:  0.01
+reg:  0.000001
 yarn: True
-solverWeight: 0.08
-blockSize: 5000
+solverWeight: 0.01
+blockSize:  5000
 numBlocks: 20
-numIters: 10
+numIters: 1
 whiten: True
 
 
