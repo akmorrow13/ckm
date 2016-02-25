@@ -30,7 +30,6 @@ class CC(
     imgChannels: Int,
     whitener: Option[ZCAWhitener] = None,
     poolSize: Int = 1,
-    normalizePatches: Boolean = true,
     varConstant: Double = 10.0
     )
   extends Transformer[Image, Image] {
@@ -48,7 +47,7 @@ class CC(
     println(s"First pixel ${in.take(1)(0).get(0,0,0)}")
 
     in.mapPartitions(CC.convolvePartitions(_, resWidth, resHeight, imgChannels, convSize,
-      normalizePatches, whitener, varConstant, numInputFeatures, numOutputFeatures, seed, bandwidth))
+      whitener, varConstant, numInputFeatures, numOutputFeatures, seed, bandwidth))
   }
 
   def apply(in: Image): Image = {
@@ -60,7 +59,7 @@ class CC(
     val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
     CC.convolve(in, patchMat, resWidth, resHeight,
-      imgChannels, convSize, normalizePatches, whitener, varConstant, convolutions, phase)
+      imgChannels, convSize, whitener, varConstant, convolutions, phase)
   }
 }
 
@@ -108,7 +107,6 @@ object CC {
       resHeight: Int,
       imgChannels: Int,
       convSize: Int,
-      normalizePatches: Boolean,
       whitener: Option[ZCAWhitener],
       varConstant: Double = 10.0,
       convolutions: DenseMatrix[Double],
@@ -116,7 +114,7 @@ object CC {
       ): Image = {
 
     val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize,
-      normalizePatches, whitener, varConstant)
+      whitener, varConstant)
 
     val whitenedImage =
     whitener match  {
@@ -154,7 +152,6 @@ object CC {
       resHeight: Int,
       imgChannels: Int,
       convSize: Int,
-      normalizePatches: Boolean,
       whitener: Option[ZCAWhitener],
       varConstant: Double): DenseMatrix[Double] = {
     var x,y,chan,pox,poy,py,px = 0
@@ -185,10 +182,7 @@ object CC {
       poy+=1
     }
 
-    val patchMatN = if(normalizePatches) Stats.normalizeRows(patchMat, varConstant) else patchMat
-
-
-    patchMatN
+    patchMat
   }
 
   def convolvePartitions(
@@ -197,7 +191,6 @@ object CC {
       resHeight: Int,
       imgChannels: Int,
       convSize: Int,
-      normalizePatches: Boolean,
       whitener: Option[ZCAWhitener],
       varConstant: Double,
       numInputFeatures: Int,
@@ -213,7 +206,7 @@ object CC {
     val uniform = new Uniform(0, 1)
     val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
     val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
-    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, convSize, normalizePatches,
+    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, convSize, 
       whitener, varConstant, convolutions, phase))
 
   }

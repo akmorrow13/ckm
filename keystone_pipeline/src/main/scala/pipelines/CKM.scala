@@ -139,7 +139,7 @@ object CKM extends Serializable with Logging {
     val featurizer2 = ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
     //println(s"conv kernel output median: ${samplePairwiseMedian(featurizer1(data.train),  2)}")
-    val randomFeatures = BroadcastCosineRandomFeatures(4096,20000,1e-7) andThen new Cacher[DenseVector[Double]]
+    val randomFeatures = BroadcastCosineRandomFeatures(4096,20000,1e-4) andThen new Cacher[DenseVector[Double]]
 
     val featurizer = featurizer1 andThen featurizer2 andThen randomFeatures
 
