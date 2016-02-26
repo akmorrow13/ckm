@@ -48,11 +48,11 @@ object CKM2 extends Serializable with Logging {
   def samplePairwiseMedian(data: RDD[Image], patchSize: Int = 0): Double = {
       val baseFilters =
       if (patchSize == 0) {
-        new Sampler(100000)(ImageVectorizer(data))
+        new Sampler(1000)(ImageVectorizer(data))
       } else {
         val patchExtractor = new Windower(1, patchSize)
                                               .andThen(ImageVectorizer.apply)
-                                              .andThen(new Sampler(100000))
+                                              .andThen(new Sampler(1000))
         patchExtractor(data)
       }
 
@@ -85,6 +85,7 @@ object CKM2 extends Serializable with Logging {
                                               .andThen(new Sampler(100000))
       val baseFilters = patchExtractor(data.train.map(_.image))
       val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
+
       val whitener = new ZCAWhitenerEstimator(conf.whitenerValue).fitSingle(baseFilterMat)
       val whitenedBase = whitener(baseFilterMat)
       val diff_norm_median = pairwiseMedian(whitenedBase)
@@ -123,7 +124,7 @@ object CKM2 extends Serializable with Logging {
       val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(i), currX, currY, numInputFeatures, None, conf.pool(i))
 
       if (conf.pool(i) > 1) {
-        var pooler =  new Pooler(conf.pool(i), conf.pool(i), identity, _.sum)
+        var pooler =  new Pooler(conf.pool(i), conf.pool(i), identity, (x:DenseVector[Double]) => mean(x))
         convKernel = convKernel andThen ccap andThen pooler
       } else {
         convKernel = convKernel andThen ccap
@@ -141,7 +142,7 @@ object CKM2 extends Serializable with Logging {
     val featurizer2 = ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
 
-    println(s"conv kernel output median: ${samplePairwiseMedian(featurizer1(data.train))}")
+    //println(s"conv kernel output median: ${samplePairwiseMedian(featurizer1(data.train), conf.patch_sizes(1))}")
     val featurizer = featurizer1 andThen featurizer2
 
     var XTrain = featurizer(data.train)
