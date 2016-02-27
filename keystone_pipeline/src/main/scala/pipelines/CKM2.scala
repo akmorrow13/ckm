@@ -63,7 +63,7 @@ object CKM2 extends Serializable with Logging {
   def run(sc: SparkContext, conf: CKM2Conf) {
     val data: Dataset = loadData(sc, conf.dataset)
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" +
-      conf.bandwidth.mkString("-") + "_" + conf.pool.mkString("-") + "_" + conf.filters.mkString("-")
+      conf.bandwidth.mkString("-") + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
 
 
     val (xDim, yDim, numChannels) = getInfo(data)
@@ -108,9 +108,10 @@ object CKM2 extends Serializable with Logging {
       } else {
         convKernel = convKernel andThen ccap
       }
-      currX = ccap.outX
-      currY = ccap.outY
-      println(s"Width: ${currX}, Height: ${currY}")
+      currX = math.ceil(((currX  - conf.patch_sizes(0) + 1) - conf.pool(0)/2)/conf.poolStride(0)).toInt
+      currY = math.ceil(((currY  - conf.patch_sizes(0) + 1) - conf.pool(0)/2)/conf.poolStride(0)).toInt
+
+      println(s"Layer 0 output, Width: ${currX}, Height: ${currY}")
       numInputFeatures = numOutputFeatures
       1
     } else {
@@ -129,8 +130,9 @@ object CKM2 extends Serializable with Logging {
       } else {
         convKernel = convKernel andThen ccap
       }
-      currX = ccap.outX
-      currY = ccap.outY
+      currX = math.ceil(((currX  - conf.patch_sizes(i) + 1) - conf.pool(i)/2)/conf.poolStride(i)).toInt
+      currY = math.ceil(((currY  - conf.patch_sizes(i) + 1) - conf.pool(i)/2)/conf.poolStride(i)).toInt
+      println(s"Layer ${i} output, Width: ${currX}, Height: ${currY}")
       numInputFeatures = numOutputFeatures
     }
     val outFeatures = currX * currY * numOutputFeatures
@@ -143,6 +145,7 @@ object CKM2 extends Serializable with Logging {
 
 
     //println(s"conv kernel output median: ${samplePairwiseMedian(featurizer1(data.train), conf.patch_sizes(1))}")
+
     val featurizer = featurizer1 andThen featurizer2
 
     var XTrain = featurizer(data.train)
