@@ -103,7 +103,7 @@ object CKM2 extends Serializable with Logging {
       val seed = conf.seed
       val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, Some(whitener), conf.pool(0))
       if (conf.pool(0) > 1) {
-        var pooler =  new Pooler(conf.pool(0), conf.pool(0), identity, (x:DenseVector[Double]) => mean(x))
+        var pooler =  new Pooler(conf.poolStride(0), conf.pool(0), identity, (x:DenseVector[Double]) => mean(x))
         convKernel = convKernel andThen ccap andThen pooler
       } else {
         convKernel = convKernel andThen ccap
@@ -124,7 +124,7 @@ object CKM2 extends Serializable with Logging {
       val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(i), currX, currY, numInputFeatures, None, conf.pool(i))
 
       if (conf.pool(i) > 1) {
-        var pooler =  new Pooler(conf.pool(i), conf.pool(i), identity, (x:DenseVector[Double]) => mean(x))
+        var pooler =  new Pooler(conf.poolStride(i), conf.pool(i), identity, (x:DenseVector[Double]) => mean(x))
         convKernel = convKernel andThen ccap andThen pooler
       } else {
         convKernel = convKernel andThen ccap
@@ -256,6 +256,7 @@ object CKM2 extends Serializable with Logging {
     @BeanProperty var  solve: Boolean = true
     @BeanProperty var  saveFeatures: Boolean = false
     @BeanProperty var  pool: Array[Int] = Array(2)
+    @BeanProperty var  poolStride: Array[Int] = Array(2)
   }
 
 

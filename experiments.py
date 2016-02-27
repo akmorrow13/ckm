@@ -182,6 +182,29 @@ def load_features_from_text(fname):
     features, labels = zip(*x)
     return features, labels
 
+def save_text_features_as_npz(fname_train, fname_test):
+    print("Loading Train Features")
+    X_train, y_train = load_all_features_from_dir(fname_train)
+    print("Loading Test Features")
+    X_test, y_test = load_all_features_from_dir(fname_test)
+    train_file = open(fname_train + ".npz", "w+")
+    test_file = open(fname_test + ".npz", "w+")
+    print("Saving Train Features")
+    np.savez(train_file, X_train=X_train, y_train=y_train)
+    print("Saving Test Features")
+    np.savez(test_file, X_test=X_test, y_test=y_test)
+
+def scp_features_to_c78(fname_train, fname_test, path="/work/vaishaal"):
+    save_text_features_as_npz(fname_train, fname_test)
+    print("Moving features to c78")
+    p = subprocess.Popen(" ".join(["scp", fname_train +".npz", "c78.millennium.berkeley.edu:{0}".format(path)]), shell=True, executable='/bin/bash')
+    p.wait()
+    p = subprocess.Popen(" ".join(["scp", fname_test +".npz", "c78.millennium.berkeley.edu:{0}".format(path)]), shell=True, executable='/bin/bash')
+    p.wait()
+    if p.returncode != 0:
+        raise Exception("invocation terminated with non-zero exit status")
+
+
 
 def compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred):
     exp_flatten = flatten_dict(exp)
