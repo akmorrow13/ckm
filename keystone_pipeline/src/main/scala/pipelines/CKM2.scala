@@ -85,14 +85,8 @@ object CKM2 extends Serializable with Logging {
                                               .andThen(new Sampler(100000))
       val baseFilters = patchExtractor(data.train.map(_.image))
       val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
-44
       val whitener = new ZCAWhitenerEstimator(conf.whitenerValue).fitSingle(baseFilterMat)
       val whitenedBase = whitener(baseFilterMat)
-      val diff_norm_median = pairwiseMedian(whitenedBase)
-      val patchNorms = norm(whitenedBase :+ conf.whitenerOffset, Axis._1)
-      val normalizedPatches = whitenedBase(::, *) :/ patchNorms
-      println("gamma is " + 1.0/(diff_norm_median * diff_norm_median))
-
 
       val rows = whitener.whitener.rows
       val cols = whitener.whitener.cols
@@ -101,7 +95,7 @@ object CKM2 extends Serializable with Logging {
       numOutputFeatures = conf.filters(0)
       val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
       val seed = conf.seed
-      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, Some(whitener), conf.pool(0))
+      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, Some(whitener), conf.whitenerOffset, conf.pool(0))
       if (conf.pool(0) > 1) {
         var pooler =  new Pooler(conf.poolStride(0), conf.pool(0), identity, (x:DenseVector[Double]) => mean(x))
         convKernel = convKernel andThen ccap andThen pooler
@@ -122,7 +116,7 @@ object CKM2 extends Serializable with Logging {
       numOutputFeatures = conf.filters(i)
       val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
       val seed = conf.seed + i
-      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(i), currX, currY, numInputFeatures, None, conf.pool(i))
+      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(i), currX, currY, numInputFeatures, None, conf.whitenerOffset, conf.pool(i))
 
       if (conf.pool(i) > 1) {
         var pooler =  new Pooler(conf.poolStride(i), conf.pool(i), identity, (x:DenseVector[Double]) => mean(x))

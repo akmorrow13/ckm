@@ -29,6 +29,7 @@ class CC(
     imgHeight: Int,
     imgChannels: Int,
     whitener: Option[ZCAWhitener] = None,
+    whitenerOffset: Double = 1e-12,
     poolSize: Int = 1
     )
   extends Transformer[Image, Image] {
@@ -46,7 +47,7 @@ class CC(
     println(s"First pixel ${in.take(1)(0).get(0,0,0)}")
 
     in.mapPartitions(CC.convolvePartitions(_, resWidth, resHeight, imgChannels, convSize,
-      whitener, numInputFeatures, numOutputFeatures, seed, bandwidth))
+      whitener, whitenerOffset, numInputFeatures, numOutputFeatures, seed, bandwidth))
   }
 
   def apply(in: Image): Image = {
@@ -58,7 +59,7 @@ class CC(
     val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
     CC.convolve(in, patchMat, resWidth, resHeight,
-      imgChannels, convSize, whitener, convolutions, phase)
+      imgChannels, convSize, whitener, whitenerOffset, convolutions, phase)
   }
 }
 
@@ -107,6 +108,7 @@ object CC {
       imgChannels: Int,
       convSize: Int,
       whitener: Option[ZCAWhitener],
+      whitenerOffset: Double,
       convolutions: DenseMatrix[Double],
       phase: DenseVector[Double]
       ): Image = {
@@ -124,7 +126,7 @@ object CC {
       }
     }
 
-    val patchNorms = norm(whitenedImage :+ 1e-12, Axis._1)
+    val patchNorms = norm(whitenedImage :+ whitenerOffset, Axis._1)
     val normalizedPatches = whitenedImage(::, *) :/ patchNorms
     var convRes: DenseMatrix[Double] = normalizedPatches * convolutions
 
@@ -189,6 +191,7 @@ object CC {
       imgChannels: Int,
       convSize: Int,
       whitener: Option[ZCAWhitener],
+      whitenerOffset: Double,
       numInputFeatures: Int,
       numOutputFeatures: Int,
       seed: Int,
@@ -202,8 +205,8 @@ object CC {
     val uniform = new Uniform(0, 1)
     val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
     val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
-    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, convSize, 
-      whitener, convolutions, phase))
+    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, convSize,
+      whitener, whitenerOffset, convolutions, phase))
 
   }
 }
