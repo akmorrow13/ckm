@@ -85,7 +85,7 @@ object CKM2 extends Serializable with Logging {
                                               .andThen(new Sampler(100000))
       val baseFilters = patchExtractor(data.train.map(_.image))
       val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
-
+44
       val whitener = new ZCAWhitenerEstimator(conf.whitenerValue).fitSingle(baseFilterMat)
       val whitenedBase = whitener(baseFilterMat)
       val diff_norm_median = pairwiseMedian(whitenedBase)
@@ -130,8 +130,9 @@ object CKM2 extends Serializable with Logging {
       } else {
         convKernel = convKernel andThen ccap
       }
-      currX = math.ceil(((currX  - conf.patch_sizes(i) + 1) - conf.pool(i)/2)/conf.poolStride(i)).toInt
-      currY = math.ceil(((currY  - conf.patch_sizes(i) + 1) - conf.pool(i)/2)/conf.poolStride(i)).toInt
+      // (8 - 3 + 1)
+      currX = math.ceil(((currX  - conf.patch_sizes(i) + 1) - conf.pool(i)/2.0)/conf.poolStride(i)).toInt
+      currY = math.ceil(((currY  - conf.patch_sizes(i) + 1) - conf.pool(i)/2.0)/conf.poolStride(i)).toInt
       println(s"Layer ${i} output, Width: ${currX}, Height: ${currY}")
       numInputFeatures = numOutputFeatures
     }
@@ -146,7 +147,11 @@ object CKM2 extends Serializable with Logging {
 
     //println(s"conv kernel output median: ${samplePairwiseMedian(featurizer1(data.train), conf.patch_sizes(1))}")
 
-    val featurizer = featurizer1 andThen featurizer2
+    var featurizer = featurizer1 andThen featurizer2
+    if (conf.cosineSolver) {
+      val randomFeatures = SeededCosineRandomFeatures(outFeatures, conf.cosineFeatures,  conf.cosineGamma, 24) andThen new Cacher[DenseVector[Double]]
+      featurizer = featurizer andThen randomFeatures
+    }
 
     var XTrain = featurizer(data.train)
     val count = XTrain.count()
@@ -250,6 +255,9 @@ object CKM2 extends Serializable with Logging {
     @BeanProperty var  numClasses: Int = 10
     @BeanProperty var  yarn: Boolean = true
     @BeanProperty var  solverWeight: Double = 0
+    @BeanProperty var  cosineSolver: Boolean = false
+    @BeanProperty var  cosineFeatures: Int = 40000
+    @BeanProperty var  cosineGamma: Double = 1e-8
     @BeanProperty var  blockSize: Int = 4000
     @BeanProperty var  numBlocks: Int = 2
     @BeanProperty var  numIters: Int = 2

@@ -130,7 +130,6 @@ object CC {
 
     convRes(*, ::) :+= phase
     cos.inPlace(convRes)
-    convRes(::, *) :*=  patchNorms
     val res = new RowMajorArrayVectorizedImage(
       convRes.toArray,
       ImageMetadata(resWidth, resHeight, convolutions.cols))
