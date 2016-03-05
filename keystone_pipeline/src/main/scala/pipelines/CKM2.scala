@@ -8,7 +8,7 @@ import evaluation.MulticlassClassifierEvaluator
 import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import workflow.Transformer
-import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator, ZCAWhitener, ZCAWhitenerEstimator, DenseLBFGSwithL2, SoftMaxDenseGradient}
+import nodes.learning._
 import nodes.stats.{StandardScaler, Sampler, SeededCosineRandomFeatures, BroadcastCosineRandomFeatures, CosineRandomFeatures}
 import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier, VectorCombiner}
 
@@ -95,7 +95,7 @@ object CKM2 extends Serializable with Logging {
       numOutputFeatures = conf.filters(0)
       val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
       val seed = conf.seed
-      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, Some(whitener), conf.whitenerOffset, conf.pool(0))
+      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, Some(whitener), conf.whitenerOffset, conf.pool(0), conf.insanity)
       if (conf.pool(0) > 1) {
         var pooler =  new Pooler(conf.poolStride(0), conf.pool(0), identity, (x:DenseVector[Double]) => mean(x))
         convKernel = convKernel andThen ccap andThen pooler
@@ -116,7 +116,7 @@ object CKM2 extends Serializable with Logging {
       numOutputFeatures = conf.filters(i)
       val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
       val seed = conf.seed + i
-      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(i), currX, currY, numInputFeatures, None, conf.whitenerOffset, conf.pool(i))
+      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(i), currX, currY, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity)
 
       if (conf.pool(i) > 1) {
         var pooler =  new Pooler(conf.poolStride(i), conf.pool(i), identity, (x:DenseVector[Double]) => mean(x))
@@ -173,8 +173,14 @@ object CKM2 extends Serializable with Logging {
     val avgEigenValue = (XTrain.map((x:DenseVector[Double]) => mean(x :*  x)).sum()/(1.0*count))
     println(s"Average EigenValue : ${avgEigenValue}")
     if (conf.solve) {
-      if (conf.loss == "WeightedLeastSquares") {
-        val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
+      val model =
+      if (conf.solver ==  "kernel" ) {
+      val kernelGen = new GaussianKernelGenerator(conf.kernelGamma)
+       new KernelRidgeRegression(kernelGen, Array(conf.reg), conf.blockSize, conf.numIters, Some(895423832L)).fit(XTrain, yTrain) andThen Transformer[Array[DenseVector[Double]], DenseVector[Double]](_(0))
+
+     } else {
+      new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
+    }
         val clf = model andThen MaxClassifier
 
         val yTrainPred = clf.apply(XTrain)
@@ -205,10 +211,6 @@ object CKM2 extends Serializable with Logging {
             out_test.write("\n")
           }
           out_test.close()
-        } else if (conf.loss == "softmax") {
-          println("RUNNING SOFTMAX")
-          /* NOT IMPLEMENTED */
-        }
       }
   }
 
@@ -252,6 +254,7 @@ object CKM2 extends Serializable with Logging {
     @BeanProperty var  cosineSolver: Boolean = false
     @BeanProperty var  cosineFeatures: Int = 40000
     @BeanProperty var  cosineGamma: Double = 1e-8
+    @BeanProperty var  kernelGamma: Double = 5e-5
     @BeanProperty var  blockSize: Int = 4000
     @BeanProperty var  numBlocks: Int = 2
     @BeanProperty var  numIters: Int = 2
@@ -259,6 +262,8 @@ object CKM2 extends Serializable with Logging {
     @BeanProperty var  whitenerValue: Double =  0.1
     @BeanProperty var  whitenerOffset: Double = 0.001
     @BeanProperty var  solve: Boolean = true
+    @BeanProperty var  solver: String = "kernel"
+    @BeanProperty var  insanity: Boolean = false
     @BeanProperty var  saveFeatures: Boolean = false
     @BeanProperty var  pool: Array[Int] = Array(2)
     @BeanProperty var  poolStride: Array[Int] = Array(2)

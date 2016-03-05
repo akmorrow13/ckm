@@ -30,7 +30,8 @@ class CC(
     imgChannels: Int,
     whitener: Option[ZCAWhitener] = None,
     whitenerOffset: Double = 1e-12,
-    poolSize: Int = 1
+    poolSize: Int = 1,
+    insanity: Boolean = false
     )
   extends Transformer[Image, Image] {
 
@@ -47,7 +48,7 @@ class CC(
     println(s"First pixel ${in.take(1)(0).get(0,0,0)}")
 
     in.mapPartitions(CC.convolvePartitions(_, resWidth, resHeight, imgChannels, convSize,
-      whitener, whitenerOffset, numInputFeatures, numOutputFeatures, seed, bandwidth))
+      whitener, whitenerOffset, numInputFeatures, numOutputFeatures, seed, bandwidth, insanity))
   }
 
   def apply(in: Image): Image = {
@@ -59,7 +60,7 @@ class CC(
     val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
     CC.convolve(in, patchMat, resWidth, resHeight,
-      imgChannels, convSize, whitener, whitenerOffset, convolutions, phase)
+      imgChannels, convSize, whitener, whitenerOffset, convolutions, phase, insanity)
   }
 }
 
@@ -110,7 +111,8 @@ object CC {
       whitener: Option[ZCAWhitener],
       whitenerOffset: Double,
       convolutions: DenseMatrix[Double],
-      phase: DenseVector[Double]
+      phase: DenseVector[Double],
+      insanity: Boolean
       ): Image = {
 
     val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize,
@@ -132,6 +134,9 @@ object CC {
 
     convRes(*, ::) :+= phase
     cos.inPlace(convRes)
+    if (insanity) {
+      convRes(::,*) :*= patchNorms
+    }
     val res = new RowMajorArrayVectorizedImage(
       convRes.toArray,
       ImageMetadata(resWidth, resHeight, convolutions.cols))
@@ -195,7 +200,8 @@ object CC {
       numInputFeatures: Int,
       numOutputFeatures: Int,
       seed: Int,
-      bandwidth: Double
+      bandwidth: Double,
+      insanity: Boolean
       ): Iterator[Image] = {
 
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
@@ -206,7 +212,7 @@ object CC {
     val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
     val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
     imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, convSize,
-      whitener, whitenerOffset, convolutions, phase))
+      whitener, whitenerOffset, convolutions, phase, insanity))
 
   }
 }
