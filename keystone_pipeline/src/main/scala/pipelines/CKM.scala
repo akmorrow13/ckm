@@ -8,8 +8,8 @@ import evaluation.MulticlassClassifierEvaluator
 import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import workflow.Transformer
-import nodes.learning.{BlockLeastSquaresEstimator, BlockWeightedLeastSquaresEstimator, ZCAWhitener2, ZCAWhitenerEstimator, DenseLBFGSwithL2, SoftMaxDenseGradient}
-import nodes.stats.{StandardScaler, Sampler, SeededCosineRandomFeatures, BroadcastCosineRandomFeatures}
+import nodes.learning._
+import nodes.stats.{StandardScaler, Sampler, SeededCosineRandomFeatures, BroadcastCosineRandomFeatures, CosineRandomFeatures}
 import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier, VectorCombiner}
 
 import org.apache.spark.{SparkConf, SparkContext}
@@ -29,8 +29,8 @@ import org.yaml.snakeyaml.constructor.Constructor
 
 import java.io.{File, BufferedWriter, FileWriter}
 
-object CKM extends Serializable with Logging {
-  val appName = "CKM"
+object CKM2 extends Serializable with Logging {
+  val appName = "CKM2"
 
   def pairwiseMedian(data: DenseMatrix[Double]): Double = {
       val x = data(0 until data.rows/2, *)
@@ -60,20 +60,19 @@ object CKM extends Serializable with Logging {
       pairwiseMedian(baseFilterMat)
   }
 
-  def run(sc: SparkContext, conf: CKMConf) {
+  def run(sc: SparkContext, conf: CKM2Conf) {
     val data: Dataset = loadData(sc, conf.dataset)
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" +
-      conf.bandwidth.mkString("-") + "_" + conf.pool.mkString("-") + "_" + conf.filters.mkString("-")
-    val cifarFullVectors = ImageVectorizer(data.train.map(_.image)).collect()
-    val cifarFullMatrix:DenseMatrix[Double] = MatrixUtils.rowsToMatrix(cifarFullVectors).reshape(50000, 3072)
+      conf.bandwidth.mkString("-") + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
+
 
     val (xDim, yDim, numChannels) = getInfo(data)
     var currX = xDim
     var currY = yDim
-    println("RUNNIGN CKM ONE")
+
     var convKernel: Pipeline[Image, Image] = new Identity()
     var numInputFeatures = numChannels
-
+    println("RUNNING CKM TWOOOOO")
     implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
     val gaussian = new Gaussian(0, 1)
     val uniform = new Uniform(0, 1)
@@ -81,27 +80,13 @@ object CKM extends Serializable with Logging {
     val startLayer =
     if (conf.whiten) {
       // Whiten top level
-      val patchExtractor = new Windower(conf.patch_steps(0), conf.patch_sizes(0))
+      val patchExtractor = new Windower(1, conf.patch_sizes(0))
                                               .andThen(ImageVectorizer.apply)
                                               .andThen(new Sampler(100000))
       val baseFilters = patchExtractor(data.train.map(_.image))
-      val baseFilterMat = Stats.normalizeRows(MatrixUtils.rowsToMatrix(baseFilters), 10.0)
+      val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
       val whitener = new ZCAWhitenerEstimator(conf.whitenerValue).fitSingle(baseFilterMat)
       val whitenedBase = whitener(baseFilterMat)
-      val patchNorms = norm(whitenedBase :+ 1e-12, Axis._1)
-      val normalizedPatches = whitenedBase(::, *) :/ patchNorms
-
-      val x = whitenedBase(0 until whitenedBase.rows/2, *)
-      val y = whitenedBase(whitenedBase.rows/2 to -1, *)
-      val x_norm = norm(x :+ 1e-13, Axis._1)
-      val y_norm = norm(y :+ 1e-13, Axis._1)
-      val x_normalized = x / x_norm
-      val y_normalized = y / y_norm
-      val diff = (x_normalized - y_normalized)
-      val diff_norm = norm(diff, Axis._1)
-      val diff_norm_median = median(diff_norm) * median(diff_norm)
-      println("gamma is " + 1.0/diff_norm_median)
-
 
       val rows = whitener.whitener.rows
       val cols = whitener.whitener.cols
@@ -110,10 +95,17 @@ object CKM extends Serializable with Logging {
       numOutputFeatures = conf.filters(0)
       val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
       val seed = conf.seed
-      val ccap = new RCCaP(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, conf.pool(0), conf.pool(0), Some(whitener))
-      convKernel = convKernel andThen ccap
-      currX = ccap.outX
-      currY = ccap.outY
+      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, Some(whitener), conf.whitenerOffset, conf.pool(0), conf.insanity)
+      if (conf.pool(0) > 1) {
+        var pooler =  new Pooler(conf.poolStride(0), conf.pool(0), identity, (x:DenseVector[Double]) => mean(x))
+        convKernel = convKernel andThen ccap andThen pooler
+      } else {
+        convKernel = convKernel andThen ccap
+      }
+      currX = math.ceil(((currX  - conf.patch_sizes(0) + 1) - conf.pool(0)/2)/conf.poolStride(0)).toInt
+      currY = math.ceil(((currY  - conf.patch_sizes(0) + 1) - conf.pool(0)/2)/conf.poolStride(0)).toInt
+
+      println(s"Layer 0 output, Width: ${currX}, Height: ${currY}")
       numInputFeatures = numOutputFeatures
       1
     } else {
@@ -124,36 +116,48 @@ object CKM extends Serializable with Logging {
       numOutputFeatures = conf.filters(i)
       val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
       val seed = conf.seed + i
-      val ccap = new RCCaP(numInputFeatures*patchSize, numOutputFeatures, seed + i, conf.bandwidth(i), currX, currY, numInputFeatures, conf.pool(i), conf.pool(i))
-      convKernel = convKernel andThen ccap
-      currX = ccap.outX
-      currY = ccap.outY
+      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(i), currX, currY, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity)
+
+      if (conf.pool(i) > 1) {
+        var pooler =  new Pooler(conf.poolStride(i), conf.pool(i), identity, (x:DenseVector[Double]) => mean(x))
+        convKernel = convKernel andThen ccap andThen pooler
+      } else {
+        convKernel = convKernel andThen ccap
+      }
+      // (8 - 3 + 1)
+      currX = math.ceil(((currX  - conf.patch_sizes(i) + 1) - conf.pool(i)/2.0)/conf.poolStride(i)).toInt
+      currY = math.ceil(((currY  - conf.patch_sizes(i) + 1) - conf.pool(i)/2.0)/conf.poolStride(i)).toInt
+      println(s"Layer ${i} output, Width: ${currX}, Height: ${currY}")
       numInputFeatures = numOutputFeatures
     }
     val outFeatures = currX * currY * numOutputFeatures
+
     val meta = data.train.take(1)(0).image.metadata
     val first_pixel = data.train.take(1)(0).image.get(15,7,0)
     println(s"First Pixel: ${first_pixel}")
-
     val featurizer1 = ImageExtractor  andThen convKernel
     val featurizer2 = ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
-    //println(s"conv kernel output median: ${samplePairwiseMedian(featurizer1(data.train),  2)}")
-    val randomFeatures = BroadcastCosineRandomFeatures(4096,20000,1e-4) andThen new Cacher[DenseVector[Double]]
 
-    val featurizer = featurizer1 andThen featurizer2 andThen randomFeatures
+    //println(s"conv kernel output median: ${samplePairwiseMedian(featurizer1(data.train), conf.patch_sizes(1))}")
+
+    var featurizer = featurizer1 andThen featurizer2
+    if (conf.cosineSolver) {
+      val randomFeatures = SeededCosineRandomFeatures(outFeatures, conf.cosineFeatures,  conf.cosineGamma, 24) andThen new Cacher[DenseVector[Double]]
+      featurizer = featurizer andThen randomFeatures
+    }
 
     var XTrain = featurizer(data.train)
     val count = XTrain.count()
     var XTest = featurizer(data.test)
     XTest.count()
-    val sampleFV = XTrain.take(1)(0)
-    val numFeatures = sampleFV.size
-    println(s"Sanity Check: max:${max(sampleFV)}, min${min(sampleFV)}")
+
+    val numFeatures = XTrain.take(1)(0).size
     val blockSize = conf.blockSize
     println(s"numFeatures: ${numFeatures}, count: ${count}, blockSize: ${blockSize}")
 
     val labelVectorizer = ClassLabelIndicatorsFromIntLabels(conf.numClasses)
+
 
     val yTrain = labelVectorizer(LabelExtractor(data.train))
     val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
@@ -169,8 +173,14 @@ object CKM extends Serializable with Logging {
     val avgEigenValue = (XTrain.map((x:DenseVector[Double]) => mean(x :*  x)).sum()/(1.0*count))
     println(s"Average EigenValue : ${avgEigenValue}")
     if (conf.solve) {
-      if (conf.loss == "WeightedLeastSquares") {
-        val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg * avgEigenValue, conf.solverWeight).fit(XTrain, yTrain)
+      val model =
+      if (conf.solver ==  "kernel" ) {
+      val kernelGen = new GaussianKernelGenerator(conf.kernelGamma)
+       new KernelRidgeRegression(kernelGen, Array(conf.reg), conf.blockSize, conf.numIters, Some(895423832L)).fit(XTrain, yTrain) andThen Transformer[Array[DenseVector[Double]], DenseVector[Double]](_(0))
+
+     } else {
+      new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
+    }
         val clf = model andThen MaxClassifier
 
         val yTrainPred = clf.apply(XTrain)
@@ -201,10 +211,6 @@ object CKM extends Serializable with Logging {
             out_test.write("\n")
           }
           out_test.close()
-        } else if (conf.loss == "softmax") {
-          println("RUNNING SOFTMAX")
-          /* NOT IMPLEMENTED */
-        }
       }
   }
 
@@ -231,7 +237,7 @@ object CKM extends Serializable with Logging {
     (image.metadata.xDim, image.metadata.yDim, image.metadata.numChannels)
   }
 
-  class CKMConf {
+  class CKM2Conf {
     @BeanProperty var  dataset: String = "mnist_small"
     @BeanProperty var  expid: String = "mnist_small_simple"
     @BeanProperty var  mode: String = "scala"
@@ -240,21 +246,27 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  filters: Array[Int] = Array(1)
     @BeanProperty var  bandwidth : Array[Double] = Array(1.8)
     @BeanProperty var  patch_sizes: Array[Int] = Array(5)
-    @BeanProperty var  patch_steps: Array[Int] = Array(1,1,1)
-    @BeanProperty var  whitenerValue: Double =  0.1
-    @BeanProperty var  whitenerOffset: Double = 0.001
     @BeanProperty var  loss: String = "WeightedLeastSquares"
     @BeanProperty var  reg: Double = 0.001
     @BeanProperty var  numClasses: Int = 10
     @BeanProperty var  yarn: Boolean = true
     @BeanProperty var  solverWeight: Double = 0
+    @BeanProperty var  cosineSolver: Boolean = false
+    @BeanProperty var  cosineFeatures: Int = 40000
+    @BeanProperty var  cosineGamma: Double = 1e-8
+    @BeanProperty var  kernelGamma: Double = 5e-5
     @BeanProperty var  blockSize: Int = 4000
     @BeanProperty var  numBlocks: Int = 2
     @BeanProperty var  numIters: Int = 2
     @BeanProperty var  whiten: Boolean = false
+    @BeanProperty var  whitenerValue: Double =  0.1
+    @BeanProperty var  whitenerOffset: Double = 0.001
     @BeanProperty var  solve: Boolean = true
+    @BeanProperty var  solver: String = "kernel"
+    @BeanProperty var  insanity: Boolean = false
     @BeanProperty var  saveFeatures: Boolean = false
     @BeanProperty var  pool: Array[Int] = Array(2)
+    @BeanProperty var  poolStride: Array[Int] = Array(2)
   }
 
 
@@ -275,10 +287,10 @@ object CKM extends Serializable with Logging {
       val configfile = scala.io.Source.fromFile(args(0))
       val configtext = try configfile.mkString finally configfile.close()
       println(configtext)
-      val yaml = new Yaml(new Constructor(classOf[CKMConf]))
-      val appConfig = yaml.load(configtext).asInstanceOf[CKMConf]
+      val yaml = new Yaml(new Constructor(classOf[CKM2Conf]))
+      val appConfig = yaml.load(configtext).asInstanceOf[CKM2Conf]
 
-      val appName = s"CKM"
+      val appName = s"CKM2"
       val conf = new SparkConf().setAppName(appName)
       Logger.getLogger("org").setLevel(Level.WARN)
       Logger.getLogger("akka").setLevel(Level.WARN)
