@@ -217,7 +217,7 @@ object CKM2 extends Serializable with Logging {
   def loadData(sc: SparkContext, dataset: String):Dataset = {
     val (train, test) =
     if (dataset == "cifar") {
-      val train = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_train.bin")
+      val train = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_train.bin").cache
       val test = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
       (train, test)
     } else if (dataset == "mnist") {
@@ -229,6 +229,8 @@ object CKM2 extends Serializable with Logging {
       val test = SmallMnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist_small", 10, "test").cache
       (train, test)
     }
+    train.checkpoint()
+    test.checkpoint()
     return new Dataset(train, test)
   }
 
@@ -267,6 +269,7 @@ object CKM2 extends Serializable with Logging {
     @BeanProperty var  saveFeatures: Boolean = false
     @BeanProperty var  pool: Array[Int] = Array(2)
     @BeanProperty var  poolStride: Array[Int] = Array(2)
+    @BeanProperty var  checkpointDir: String = "/tmp/spark-checkpoint"
   }
 
 
@@ -298,6 +301,7 @@ object CKM2 extends Serializable with Logging {
       conf.set("spark.driver.maxResultSize", "0")
       conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
+      sc.setCheckpointDir(appConfig.checkpointDir)
       run(sc, appConfig)
       sc.stop()
     }
