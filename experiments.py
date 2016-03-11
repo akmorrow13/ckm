@@ -36,7 +36,7 @@ def main():
     elif (exp.get("mode") == "scala"):
         results = scala_run(exp, args.config)
     if (not (results is None)):
-        print tabulate(results, headers="keys")
+        print results.to_csv(header=True)
 
 def flatten_dict(d, parent_key='', sep='_'):
 
@@ -55,6 +55,7 @@ def flatten_dict(d, parent_key='', sep='_'):
 def python_run(exp):
     if (exp.get("seed") == None):
         exp["seed"] = int(random.random*(2*32))
+    start_time = time.time()
     dataset = exp["dataset"]
     seed = exp["seed"]
     verbose = exp["verbose"]
@@ -69,10 +70,13 @@ def python_run(exp):
         Test Labels shape {3}".format(X_train_lift.shape, X_test_lift.shape, y_train.shape, y_test.shape)
 
     y_train_pred, y_test_pred = solve(exp, X_train_lift, y_train, X_test_lift, y_test, seed)
+    runtime =  time.time() - start_time
     results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
+    results.insert(len(results.columns), "runtime",  runtime)
     return results
 
 def scala_run(exp, yaml_path):
+    start_time = time.time()
     expid = exp["expid"]
     config_yaml = yaml_path
     env = os.environ.copy()
@@ -112,7 +116,9 @@ def scala_run(exp, yaml_path):
         # TODO: Do more interesting things here
         y_train_pred = np.argmax(y_train_weights, axis=1)
         y_test_pred = np.argmax(y_test_weights, axis=1)
+        runtime =  time.time() - start_time
         results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
+        results.insert(len(results.columns), "runtime",  runtime)
         return results
     else:
         return None
