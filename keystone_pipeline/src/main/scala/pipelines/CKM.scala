@@ -29,8 +29,8 @@ import org.yaml.snakeyaml.constructor.Constructor
 
 import java.io.{File, BufferedWriter, FileWriter}
 
-object CKM2 extends Serializable with Logging {
-  val appName = "CKM2"
+object CKM extends Serializable with Logging {
+  val appName = "CKM"
 
   def pairwiseMedian(data: DenseMatrix[Double]): Double = {
       val x = data(0 until data.rows/2, *)
@@ -60,7 +60,7 @@ object CKM2 extends Serializable with Logging {
       pairwiseMedian(baseFilterMat)
   }
 
-  def run(sc: SparkContext, conf: CKM2Conf) {
+  def run(sc: SparkContext, conf: CKMConf) {
     val data: Dataset = loadData(sc, conf.dataset)
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" +
       conf.bandwidth.mkString("-") + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
@@ -72,7 +72,6 @@ object CKM2 extends Serializable with Logging {
 
     var convKernel: Pipeline[Image, Image] = new Identity()
     var numInputFeatures = numChannels
-    println("RUNNING CKM TWOOOOO")
     implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
     val gaussian = new Gaussian(0, 1)
     val uniform = new Uniform(0, 1)
@@ -102,8 +101,8 @@ object CKM2 extends Serializable with Logging {
       } else {
         convKernel = convKernel andThen ccap
       }
-      currX = math.ceil(((currX  - conf.patch_sizes(0) + 1) - conf.pool(0)/2)/conf.poolStride(0)).toInt
-      currY = math.ceil(((currY  - conf.patch_sizes(0) + 1) - conf.pool(0)/2)/conf.poolStride(0)).toInt
+      currX = math.ceil(((currX  - conf.patch_sizes(0) + 1) - conf.pool(0)/2.0)/conf.poolStride(0)).toInt
+      currY = math.ceil(((currY  - conf.patch_sizes(0) + 1) - conf.pool(0)/2.0)/conf.poolStride(0)).toInt
 
       println(s"Layer 0 output, Width: ${currX}, Height: ${currY}")
       numInputFeatures = numOutputFeatures
@@ -138,9 +137,7 @@ object CKM2 extends Serializable with Logging {
     val featurizer1 = ImageExtractor  andThen convKernel
     val featurizer2 = ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
-
-    //println(s"conv kernel output median: ${samplePairwiseMedian(featurizer1(data.train), conf.patch_sizes(1))}")
-
+    println("OUT FEATURES " +  outFeatures)
     var featurizer = featurizer1 andThen featurizer2
     if (conf.cosineSolver) {
       val randomFeatures = SeededCosineRandomFeatures(outFeatures, conf.cosineFeatures,  conf.cosineGamma, 24) andThen new Cacher[DenseVector[Double]]
@@ -181,10 +178,11 @@ object CKM2 extends Serializable with Logging {
      } else {
       new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
     }
-        val clf = model andThen MaxClassifier
+        val trainPredictions = model.apply(XTrain).cache()
+        val testPredictions =  model.apply(XTest).cache()
 
-        val yTrainPred = clf.apply(XTrain)
-        val yTestPred =  clf.apply(XTest)
+        val yTrainPred = MaxClassifier.apply(trainPredictions)
+        val yTestPred =  MaxClassifier.apply(testPredictions)
 
         val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), 10)
         val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), 10)
@@ -194,7 +192,6 @@ object CKM2 extends Serializable with Logging {
         val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
         val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
 
-        val trainPredictions = model(XTrain)
         trainPredictions.zip(LabelExtractor(data.train)).map {
             case (weights, label) => s"$label," + weights.toArray.mkString(",")
           }.collect().foreach{x =>
@@ -203,7 +200,6 @@ object CKM2 extends Serializable with Logging {
           }
           out_train.close()
 
-        val testPredictions = model(XTest)
         testPredictions.zip(LabelExtractor(data.test)).map {
             case (weights, label) => s"$label," + weights.toArray.mkString(",")
           }.collect().foreach{x =>
@@ -239,7 +235,7 @@ object CKM2 extends Serializable with Logging {
     (image.metadata.xDim, image.metadata.yDim, image.metadata.numChannels)
   }
 
-  class CKM2Conf {
+  class CKMConf {
     @BeanProperty var  dataset: String = "mnist_small"
     @BeanProperty var  expid: String = "mnist_small_simple"
     @BeanProperty var  mode: String = "scala"
@@ -290,11 +286,9 @@ object CKM2 extends Serializable with Logging {
       val configfile = scala.io.Source.fromFile(args(0))
       val configtext = try configfile.mkString finally configfile.close()
       println(configtext)
-      val yaml = new Yaml(new Constructor(classOf[CKM2Conf]))
-      val appConfig = yaml.load(configtext).asInstanceOf[CKM2Conf]
-
-      val appName = s"CKM2"
-      val conf = new SparkConf().setAppName(appName)
+      val yaml = new Yaml(new Constructor(classOf[CKMConf]))
+      val appConfig = yaml.load(configtext).asInstanceOf[CKMConf]
+      val conf = new SparkConf().setAppName(appConfig.expid)
       Logger.getLogger("org").setLevel(Level.WARN)
       Logger.getLogger("akka").setLevel(Level.WARN)
       conf.setIfMissing("spark.master", "local[16]")

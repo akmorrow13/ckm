@@ -88,7 +88,7 @@ def scala_run(exp, yaml_path):
     logfile = expid + ".spark.log"
     # if os.path.exists(logfile) and output_sanity_check:
     #     raise ValueError("output dir has logfile, should be empty")
-    pipelineClass="pipelines.CKM2"
+    pipelineClass="pipelines.CKM"
     pipelineJar = "/home/eecs/vaishaal/ckm/keystone_pipeline/target/scala-2.10/ckm-assembly-0.1.jar"
     if not os.path.exists(pipelineJar):
         raise ValueError("Cannot find pipeline jar")
