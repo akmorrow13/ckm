@@ -1,6 +1,7 @@
 import argparse
 
 from yaml import load, dump
+from itertools import groupby
 
 import features_pb2
 from pandas import DataFrame
@@ -111,11 +112,22 @@ def scala_run(exp, yaml_path):
     if p.returncode != 0:
         raise Exception("invocation terminated with non-zero exit status")
     if (exp["solve"]):
-        y_train, y_train_weights  = load_scala_results("/tmp/ckm_train_results")
-        y_test, y_test_weights  = load_scala_results("/tmp/ckm_test_results")
+        y_train, y_train_weights, ids_train  = load_scala_results("/tmp/ckm_train_results")
+        y_test, y_test_weights, ids_test  = load_scala_results("/tmp/ckm_test_results")
         # TODO: Do more interesting things here
-        y_train_pred = np.argmax(y_train_weights, axis=1)
-        y_test_pred = np.argmax(y_test_weights, axis=1)
+        if not exp.get("augment"):
+            y_train_pred = np.argmax(y_train_weights, axis=1)
+            y_test_pred = np.argmax(y_test_weights, axis=1)
+        else:
+            grouped_train = map(lambda x: map(lambda y: y[: 1:], x[1]), groupby(np.vstack((ids_train, y_train_weights)), lambda x: x[0]))
+            grouped_test = map(lambda x: map(lambda y: y[: 1:], x[1]), groupby(np.vstack((ids_test, y_test_weights)), lambda x: x[0]))
+            y_train_weights_avg = map(lambda  x: np.average(x), grouped_train)
+            y_test_weights_avg = map(lambda  x: np.average(x), grouped_test)
+            assert(y_train.shape == y_test.shape)
+            y_train_pred = np.argmax(y_train_weights_avg, axis=1)
+            y_test_pred = np.argmax(y_test_weights_avg, axis=1)
+
+
         runtime =  time.time() - start_time
         results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
         results.insert(len(results.columns), "runtime",  runtime)
@@ -144,7 +156,6 @@ def save_features_python(X, y, name):
     f.write(dataset.SerializeToString())
     f.close()
 
-
 def load_features_python(name):
     dataset = features_pb2.Dataset()
     f = open("{0}.bin".format(name), "rb")
@@ -164,9 +175,10 @@ def load_scala_results(name):
     f = open(name, "r")
     result_lines = f.readlines()
     results = np.array(map(lambda x: map(lambda y: float(y), x.split(",")), result_lines))
-    labels = results[:, 0]
-    weights = results[:, 1:]
-    return labels, weights
+    labels = results[:, 1]
+    ids = results[:,0]
+    weights = results[:, 2:]
+    return labels, weights, ids
 
 def load_all_features_from_dir(dirname):
     files = glob.glob(dirname + "/part*")
