@@ -115,18 +115,10 @@ def scala_run(exp, yaml_path):
         y_train, y_train_weights, ids_train  = load_scala_results("/tmp/ckm_train_results")
         y_test, y_test_weights, ids_test  = load_scala_results("/tmp/ckm_test_results")
         # TODO: Do more interesting things here
-        if not exp.get("augment"):
-            y_train_pred = np.argmax(y_train_weights, axis=1)
-            y_test_pred = np.argmax(y_test_weights, axis=1)
-        else:
-            grouped_train = map(lambda x: map(lambda y: y[: 1:], x[1]), groupby(np.vstack((ids_train, y_train_weights)), lambda x: x[0]))
-            grouped_test = map(lambda x: map(lambda y: y[: 1:], x[1]), groupby(np.vstack((ids_test, y_test_weights)), lambda x: x[0]))
-            y_train_weights_avg = map(lambda  x: np.average(x), grouped_train)
-            y_test_weights_avg = map(lambda  x: np.average(x), grouped_test)
-            assert(y_train.shape == y_test.shape)
-            y_train_pred = np.argmax(y_train_weights_avg, axis=1)
-            y_test_pred = np.argmax(y_test_weights_avg, axis=1)
-
+        if exp.get('augment'):
+            y_train_weights, y_test_weights = augmented_eval(y_train_weights, y_test_weights, ids_train, ids_test)
+        y_train_pred = np.argmax(y_train_weights, axis=1)
+        y_test_pred = np.argmax(y_test_weights, axis=1)
 
         runtime =  time.time() - start_time
         results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
@@ -135,6 +127,12 @@ def scala_run(exp, yaml_path):
     else:
         return None
 
+def augmented_eval(y_train_weights, y_test_weights, ids_train, ids_test):
+    grouped_train = np.array(map(lambda x: map(lambda y: y[1], x[1])[0], groupby(zip(ids_train, y_train_weights), lambda z: z[0])))
+    grouped_test = np.array(map(lambda x: map(lambda y: y[1], x[1])[0], groupby(zip(ids_test, y_test_weights), lambda z: z[0])))
+    y_train_weights_avg = map(lambda  x: np.average(x), grouped_train)
+    y_test_weights_avg = map(lambda  x: np.average(x), grouped_test)
+    return y_train_weights_avg, y_test_weights_avg
 
 def gen_features(exp, X_train, X_test, seed):
     ckm_run = build_ckm(exp, seed)

@@ -4,7 +4,7 @@ import breeze.stats.distributions._
 import breeze.linalg._
 import breeze.numerics._
 import breeze.stats.{mean, median}
-import evaluation.MulticlassClassifierEvaluator
+import evaluation.{AugmentedExamplesEvaluator, MulticlassClassifierEvaluator}
 import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader}
 import nodes.images._
 import workflow.Transformer
@@ -22,12 +22,15 @@ import org.apache.log4j.Level
 import org.apache.commons.math3.random.MersenneTwister
 import utils.{Image, MatrixUtils, Stats, ImageMetadata, LabeledImage, RowMajorArrayVectorizedImage, ChannelMajorArrayVectorizedImage}
 
-
-import scala.reflect.BeanProperty
+import scala.reflect.{BeanProperty, ClassTag}
 import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.constructor.Constructor
 
 import java.io.{File, BufferedWriter, FileWriter}
+
+class LabelAugmenter[T: ClassTag](mult: Int) extends FunctionNode[RDD[T], RDD[T]] {
+  def apply(in: RDD[T]) = in.flatMap(x => Seq.fill(mult)(x))
+}
 
 object CKM extends Serializable with Logging {
   val appName = "CKM"
@@ -76,22 +79,22 @@ object CKM extends Serializable with Logging {
     val gaussian = new Gaussian(0, 1)
     val uniform = new Uniform(0, 1)
     var numOutputFeatures = 0
-    var trainIds = data.train.zipWithUniqueId.map(x => x._2)
-    var testIds = data.test.zipWithUniqueId.map(x => x._2)
-    val startLayer =
+    var trainIds = data.train.zipWithUniqueId.map(x => x._2.toInt)
+    var testIds = data.test.zipWithUniqueId.map(x => x._2.toInt)
     if (conf.augment) {
-      RandomFlipper(0.5).apply(
-        val labelAugmented = new LabelAugmenter(conf.augmentSize)
-        val trainAugment = RandomPatcher(conf.augmentSize, conf.augmentPatchSize, conf.augmentPatchSize).apply(ImageExtractor(data.train)))
-        val trainLabelsAugmented = labelAugmenter(LabelExtractor(data.train))
-        val testAugment = CenterCornerPatcher(augmentPatchSize, augmentPatchSize, true).apply(ImageExtractor(data.test))
-        val testLabelsAugmented = labelAugmenter(LabelExtractor(data.test))
-        val augmentedTrain = trainAugment.zip(trainLabelsAugmented).map(LabeledImage(_.1,_.2))
-        val augmentedTest = testAugment.zip(testLabelsAugmented).map(LabeledImage(_.1,_.2))
-        trainIds = labelAugmenter(trainIds)
-        testIds = labelAugmenter(testIds)
+        val labelAugmenter = new LabelAugmenter[Int](conf.augmentSize)
+        val trainAugment =  RandomFlipper(0.5).apply(
+          RandomPatcher(conf.augmentSize, conf.augmentPatchSize, conf.augmentPatchSize).apply(ImageExtractor(data.train)))
+        val trainLabelsAugmented = labelAugmenter.apply(LabelExtractor(data.train))
+        val testAugment = CenterCornerPatcher(conf.augmentPatchSize, conf.augmentPatchSize, true).apply(ImageExtractor(data.test))
+        val testLabelsAugmented = labelAugmenter.apply(LabelExtractor(data.test))
+        val augmentedTrain = trainAugment.zip(trainLabelsAugmented).map(x => LabeledImage(x._1,x._2))
+        val augmentedTest = testAugment.zip(testLabelsAugmented).map(x => LabeledImage(x._1,x._2))
+        trainIds = labelAugmenter.apply(trainIds)
+        testIds = labelAugmenter.apply(testIds)
     }
 
+    val startLayer =
     if (conf.whiten) {
       // Whiten top level
       val patchExtractor = new Windower(1, conf.patch_sizes(0))
@@ -187,9 +190,8 @@ object CKM extends Serializable with Logging {
     if (conf.solve) {
       val model =
       if (conf.solver ==  "kernel" ) {
-      val kernelGen = new GaussianKernelGenerator(conf.kernelGamma)
-       new KernelRidgeRegression(kernelGen, Array(conf.reg), conf.blockSize, conf.numIters, Some(895423832L)).fit(XTrain, yTrain) andThen Transformer[Array[DenseVector[Double]], DenseVector[Double]](_(0))
-
+      val kernelGen = new GaussianKernelGenerator(conf.kernelGamma, XTrain)
+       new KernelRidgeRegression(kernelGen, conf.reg, conf.blockSize, conf.numIters, Some(895423832L)).fit(XTrain, yTrain)
      } else {
       new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
     }
@@ -198,20 +200,20 @@ object CKM extends Serializable with Logging {
 
         val yTrainPred = MaxClassifier.apply(trainPredictions)
         val yTestPred =  MaxClassifier.apply(testPredictions)
-        val (trainEval, testEval)
+        val (trainEval, testEval) =
         if (!conf.augment) {
           val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), 10)
           val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), 10)
-          trainEval, testEval
+          (trainEval.totalError, testEval.totalError)
         } else {
             val trainEval = AugmentedExamplesEvaluator(
-              trainIds, yTrainPred, yTrain, conf.numClasses)
+              trainIds, trainPredictions, LabelExtractor(data.train), conf.numClasses)
             val testEval = AugmentedExamplesEvaluator(
-              testIds, yTestPred, yTest, conf.numClasses)
-            trainEval, testEval
+              testIds, testPredictions, LabelExtractor(data.test), conf.numClasses)
+            (trainEval.totalError, testEval.totalError)
         }
-        println(s"total training accuracy ${1 - trainEval.totalError}")
-        println(s"total testing accuracy ${1 - testEval.totalError}")
+        println(s"total training accuracy ${1 - trainEval}")
+        println(s"total testing accuracy ${1 - testEval}")
 
         val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
         val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
@@ -224,7 +226,7 @@ object CKM extends Serializable with Logging {
           }
           out_train.close()
 
-        testPredictions.zip(LabelExtractor(data.test)).map {
+        testPredictions.zip(LabelExtractor(data.test).zip(testIds)).map {
             case (weights, (label, id)) => s"$id,$label," + weights.toArray.mkString(",")
           }.collect().foreach{x =>
             out_test.write(x)
@@ -290,7 +292,7 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  pool: Array[Int] = Array(2)
     @BeanProperty var  poolStride: Array[Int] = Array(2)
     @BeanProperty var  checkpointDir: String = "/tmp/spark-checkpoint"
-    @BeanProperty var  augment: Boolean = True
+    @BeanProperty var  augment: Boolean = false
     @BeanProperty var  augmentPatchSize: Int = 24
     @BeanProperty var  augmentSize: Int = 10
   }
