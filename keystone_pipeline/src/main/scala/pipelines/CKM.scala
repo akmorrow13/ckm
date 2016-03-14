@@ -78,11 +78,15 @@ object CKM extends Serializable with Logging {
     var testIds = data.test.zipWithUniqueId.map(x => x._2.toInt)
     data =
     if (conf.augment) {
-        val labelAugmenter = new LabelAugmenter[Int](conf.augmentSize)
-        val trainAugment =  RandomFlipper(0.5).apply(
-          RandomPatcher(conf.augmentSize, conf.patch_sizes(0), conf.patch_sizes(0)).apply(ImageExtractor(data.train)))
+      /* Augment always blows up data set by 10 (for now) 
+       * TODO: Make this more modular? 
+       * */
+        val labelAugmenter = new LabelAugmenter[Int](10)
+
+        val trainAugment = CenterCornerPatcher(conf.augmentPatchSize, conf.augmentPatchSize, true).apply(ImageExtractor(data.train))
+        val testAugment = CenterCornerPatcher(conf.augmentPatchSize, conf.augmentPatchSize, true).apply(ImageExtractor(data.test))
+
         val trainLabelsAugmented = labelAugmenter.apply(LabelExtractor(data.train))
-        val testAugment = CenterCornerPatcher(conf.patch_sizes(0), conf.patch_sizes(0), true).apply(ImageExtractor(data.test))
         val testLabelsAugmented = labelAugmenter.apply(LabelExtractor(data.test))
         val augmentedTrain = trainAugment.zip(trainLabelsAugmented).map(x => LabeledImage(x._1,x._2))
         val augmentedTest = testAugment.zip(testLabelsAugmented).map(x => LabeledImage(x._1,x._2))
@@ -299,7 +303,7 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  poolStride: Array[Int] = Array(2)
     @BeanProperty var  checkpointDir: String = "/tmp/spark-checkpoint"
     @BeanProperty var  augment: Boolean = false
-    @BeanProperty var  augmentSize: Int = 10
+    @BeanProperty var  augmentPatchSize: Int = 5
   }
 
 
