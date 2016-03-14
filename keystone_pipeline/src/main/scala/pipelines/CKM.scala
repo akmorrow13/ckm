@@ -69,30 +69,35 @@ object CKM extends Serializable with Logging {
       conf.bandwidth.mkString("-") + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
 
 
-    val (xDim, yDim, numChannels) = getInfo(data)
-    var currX = xDim
-    var currY = yDim
-
     var convKernel: Pipeline[Image, Image] = new Identity()
-    var numInputFeatures = numChannels
     implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
     val gaussian = new Gaussian(0, 1)
     val uniform = new Uniform(0, 1)
     var numOutputFeatures = 0
     var trainIds = data.train.zipWithUniqueId.map(x => x._2.toInt)
     var testIds = data.test.zipWithUniqueId.map(x => x._2.toInt)
+    data =
     if (conf.augment) {
         val labelAugmenter = new LabelAugmenter[Int](conf.augmentSize)
         val trainAugment =  RandomFlipper(0.5).apply(
-          RandomPatcher(conf.augmentSize, conf.augmentPatchSize, conf.augmentPatchSize).apply(ImageExtractor(data.train)))
+          RandomPatcher(conf.augmentSize, conf.patch_sizes(0), conf.patch_sizes(0)).apply(ImageExtractor(data.train)))
         val trainLabelsAugmented = labelAugmenter.apply(LabelExtractor(data.train))
-        val testAugment = CenterCornerPatcher(conf.augmentPatchSize, conf.augmentPatchSize, true).apply(ImageExtractor(data.test))
+        val testAugment = CenterCornerPatcher(conf.patch_sizes(0), conf.patch_sizes(0), true).apply(ImageExtractor(data.test))
         val testLabelsAugmented = labelAugmenter.apply(LabelExtractor(data.test))
         val augmentedTrain = trainAugment.zip(trainLabelsAugmented).map(x => LabeledImage(x._1,x._2))
         val augmentedTest = testAugment.zip(testLabelsAugmented).map(x => LabeledImage(x._1,x._2))
         trainIds = labelAugmenter.apply(trainIds)
         testIds = labelAugmenter.apply(testIds)
+        new Dataset(augmentedTrain, augmentedTest)
+    } else {
+      data
     }
+
+    val (xDim, yDim, numChannels) = getInfo(data)
+    var numInputFeatures = numChannels
+    var currX = xDim
+    var currY = yDim
+
 
     val startLayer =
     if (conf.whiten) {
@@ -178,6 +183,7 @@ object CKM extends Serializable with Logging {
     val yTest = labelVectorizer(LabelExtractor(data.test)).map(convert(_, Int).toArray)
     yTrain.count()
     yTest.count()
+    println(s"${yTrain} train points")
 
     if (conf.saveFeatures) {
       println("Saving Features")
@@ -293,7 +299,6 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  poolStride: Array[Int] = Array(2)
     @BeanProperty var  checkpointDir: String = "/tmp/spark-checkpoint"
     @BeanProperty var  augment: Boolean = false
-    @BeanProperty var  augmentPatchSize: Int = 24
     @BeanProperty var  augmentSize: Int = 10
   }
 
