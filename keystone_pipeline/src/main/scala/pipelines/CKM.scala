@@ -78,12 +78,18 @@ object CKM extends Serializable with Logging {
     var testIds = data.test.zipWithUniqueId.map(x => x._2.toInt)
     data =
     if (conf.augment) {
-      /* Augment always blows up data set by 10 (for now) 
-       * TODO: Make this more modular? 
+      /* Augment always blows up data set by 10 (for now)
+       * TODO: Make this more modular?
        * */
-        val labelAugmenter = new LabelAugmenter[Int](10)
-
-        val trainAugment = CenterCornerPatcher(conf.augmentPatchSize, conf.augmentPatchSize, true).apply(ImageExtractor(data.train))
+      val labelAugmenter = new LabelAugmenter[Int](10)
+      val trainAugment =
+        if (conf.augmentType  == "random") {
+          RandomFlipper(0.5).apply(
+            RandomPatcher(10, conf.augmentPatchSize, conf.augmentPatchSize).apply(
+              ImageExtractor(data.train)))
+        } else {
+          CenterCornerPatcher(conf.augmentPatchSize, conf.augmentPatchSize, true).apply(ImageExtractor(data.train))
+        }
         val testAugment = CenterCornerPatcher(conf.augmentPatchSize, conf.augmentPatchSize, true).apply(ImageExtractor(data.test))
 
         val trainLabelsAugmented = labelAugmenter.apply(LabelExtractor(data.train))
@@ -304,6 +310,7 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  checkpointDir: String = "/tmp/spark-checkpoint"
     @BeanProperty var  augment: Boolean = false
     @BeanProperty var  augmentPatchSize: Int = 24
+    @BeanProperty var  augmentType: String = "random"
   }
 
 
