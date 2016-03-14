@@ -303,7 +303,7 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  poolStride: Array[Int] = Array(2)
     @BeanProperty var  checkpointDir: String = "/tmp/spark-checkpoint"
     @BeanProperty var  augment: Boolean = false
-    @BeanProperty var  augmentPatchSize: Int = 5
+    @BeanProperty var  augmentPatchSize: Int = 24
   }
 
 
