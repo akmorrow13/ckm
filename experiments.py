@@ -14,7 +14,7 @@ import subprocess
 
 from tabulate import tabulate
 
-from softmax import softmax
+from softmax import *
 
 from sklearn import metrics
 from sklearn.linear_model import SGDClassifier
@@ -35,14 +35,14 @@ def main():
         results = python_run(exp)
     elif (exp.get("mode") == "scala"):
         results = scala_run(exp, args.config)
-    if (results):
+    if (not (results is None)):
         print tabulate(results, headers="keys")
 
 def flatten_dict(d, parent_key='', sep='_'):
 
     ''' Borrowed from:
     http://stackoverflow.com/questions/6027558/flatten-nested-python-dictionaries-compressing-keys
-    '''
+   '''
     items = []
     for k, v in d.items():
         if isinstance(v, collections.MutableMapping):
@@ -200,10 +200,16 @@ def build_ckm(exp, seed):
     bandwidth = exp.get("bandwidth")
     patch_sizes = exp.get("patch_sizes")
     verbose = exp.get("verbose")
+    pool = exp.get("pool")
+    channels = exp.get("numChannels", 1)
     def ckm_run(X_train, X_test):
         for i in range(layers):
+            if (i == 0 and exp.get("whiten")):
+                whiten = True
+            else:
+                whiten = False
             patch_shape = (patch_sizes[i], patch_sizes[i])
-            X_train, X_test =  ckm_apply(X_train, X_test, patch_shape, bandwidth[i], filters[i], random_state=(seed+i))
+            X_train, X_test =  ckm_apply(X_train, X_test, patch_shape, bandwidth[i], filters[i], pool=pool[i], random_state=(seed+i), whiten=whiten, numChannels=channels)
         return X_train, X_test
     return ckm_run
 
@@ -214,7 +220,7 @@ def solve(exp, X_train, y_train, X_test, y_test, seed):
     reg = exp["reg"]
     verbose = exp["verbose"]
     if (loss == "softmax"):
-        y_train_pred, y_test_pred = softmax_block_gn(X_train, y_train, X_test, y_test, reg, verbose=True)
+        y_train_pred, y_test_pred = softmax_gn(X_train, y_train, X_test, y_test, reg, verbose=True)
     else:
         clf = SGDClassifier(loss=loss, random_state=RANDOM_STATE, alpha=reg, verbose=int(verbose))
         clf.fit(X_train, y_train)
