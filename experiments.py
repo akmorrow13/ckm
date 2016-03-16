@@ -1,6 +1,7 @@
 import argparse
 
 from yaml import load, dump
+from itertools import groupby
 
 import features_pb2
 from pandas import DataFrame
@@ -36,7 +37,7 @@ def main():
     elif (exp.get("mode") == "scala"):
         results = scala_run(exp, args.config)
     if (not (results is None)):
-        print tabulate(results, headers="keys")
+        print results.to_csv(header=True)
 
 def flatten_dict(d, parent_key='', sep='_'):
 
@@ -55,6 +56,7 @@ def flatten_dict(d, parent_key='', sep='_'):
 def python_run(exp):
     if (exp.get("seed") == None):
         exp["seed"] = int(random.random*(2*32))
+    start_time = time.time()
     dataset = exp["dataset"]
     seed = exp["seed"]
     verbose = exp["verbose"]
@@ -69,10 +71,13 @@ def python_run(exp):
         Test Labels shape {3}".format(X_train_lift.shape, X_test_lift.shape, y_train.shape, y_test.shape)
 
     y_train_pred, y_test_pred = solve(exp, X_train_lift, y_train, X_test_lift, y_test, seed)
+    runtime =  time.time() - start_time
     results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
+    results.insert(len(results.columns), "runtime",  runtime)
     return results
 
 def scala_run(exp, yaml_path):
+    start_time = time.time()
     expid = exp["expid"]
     config_yaml = yaml_path
     env = os.environ.copy()
@@ -107,16 +112,27 @@ def scala_run(exp, yaml_path):
     if p.returncode != 0:
         raise Exception("invocation terminated with non-zero exit status")
     if (exp["solve"]):
-        y_train, y_train_weights  = load_scala_results("/tmp/ckm_train_results")
-        y_test, y_test_weights  = load_scala_results("/tmp/ckm_test_results")
+        y_train, y_train_weights, ids_train  = load_scala_results("/tmp/ckm_train_results")
+        y_test, y_test_weights, ids_test  = load_scala_results("/tmp/ckm_test_results")
         # TODO: Do more interesting things here
+        if exp.get('augment'):
+            y_train_weights, y_test_weights = augmented_eval(y_train_weights, y_test_weights, ids_train, ids_test)
         y_train_pred = np.argmax(y_train_weights, axis=1)
         y_test_pred = np.argmax(y_test_weights, axis=1)
+
+        runtime =  time.time() - start_time
         results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
+        results.insert(len(results.columns), "runtime",  runtime)
         return results
     else:
         return None
 
+def augmented_eval(y_train_weights, y_test_weights, ids_train, ids_test):
+    grouped_train = np.array(map(lambda x: map(lambda y: y[1], x[1])[0], groupby(zip(ids_train, y_train_weights), lambda z: z[0])))
+    grouped_test = np.array(map(lambda x: map(lambda y: y[1], x[1])[0], groupby(zip(ids_test, y_test_weights), lambda z: z[0])))
+    y_train_weights_avg = map(lambda  x: np.average(x), grouped_train)
+    y_test_weights_avg = map(lambda  x: np.average(x), grouped_test)
+    return y_train_weights_avg, y_test_weights_avg
 
 def gen_features(exp, X_train, X_test, seed):
     ckm_run = build_ckm(exp, seed)
@@ -138,7 +154,6 @@ def save_features_python(X, y, name):
     f.write(dataset.SerializeToString())
     f.close()
 
-
 def load_features_python(name):
     dataset = features_pb2.Dataset()
     f = open("{0}.bin".format(name), "rb")
@@ -158,9 +173,10 @@ def load_scala_results(name):
     f = open(name, "r")
     result_lines = f.readlines()
     results = np.array(map(lambda x: map(lambda y: float(y), x.split(",")), result_lines))
-    labels = results[:, 0]
-    weights = results[:, 1:]
-    return labels, weights
+    labels = results[:, 1]
+    ids = results[:,0]
+    weights = results[:, 2:]
+    return labels, weights, ids
 
 def load_all_features_from_dir(dirname):
     files = glob.glob(dirname + "/part*")
@@ -181,6 +197,29 @@ def load_features_from_text(fname):
     x = map(lambda x: (map(lambda y: float(y), (x[1:-2].split(",")[:-1])), float(x[1:-2].split(",")[-1])), x_tuples)
     features, labels = zip(*x)
     return features, labels
+
+def save_text_features_as_npz(fname_train, fname_test):
+    print("Loading Train Features")
+    X_train, y_train = load_all_features_from_dir(fname_train)
+    print("Loading Test Features")
+    X_test, y_test = load_all_features_from_dir(fname_test)
+    train_file = open(fname_train + ".npz", "w+")
+    test_file = open(fname_test + ".npz", "w+")
+    print("Saving Train Features")
+    np.savez(train_file, X_train=X_train, y_train=y_train)
+    print("Saving Test Features")
+    np.savez(test_file, X_test=X_test, y_test=y_test)
+
+def scp_features_to_c78(fname_train, fname_test, path="/work/vaishaal"):
+    save_text_features_as_npz(fname_train, fname_test)
+    print("Moving features to c78")
+    p = subprocess.Popen(" ".join(["scp", fname_train +".npz", "c78.millennium.berkeley.edu:{0}".format(path)]), shell=True, executable='/bin/bash')
+    p.wait()
+    p = subprocess.Popen(" ".join(["scp", fname_test +".npz", "c78.millennium.berkeley.edu:{0}".format(path)]), shell=True, executable='/bin/bash')
+    p.wait()
+    if p.returncode != 0:
+        raise Exception("invocation terminated with non-zero exit status")
+
 
 
 def compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred):

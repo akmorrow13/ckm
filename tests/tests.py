@@ -50,6 +50,7 @@ def python_mnist_full_test():
     dataset 
     assert(float(results['test_acc'][0]) >= 0.994)
 
+
 @attr('implemented', 'scala')
 def scala_mnist_sanity_test():
     ''' Runs a 2 layer ckn via keystone on a tiny susbet of MNIST
@@ -58,6 +59,15 @@ def scala_mnist_sanity_test():
     print ""
     print tabulate(results, headers="keys")
     assert(float(results['test_acc'][0]) >= 0.992)
+
+@attr('implemented')
+def augment_test():
+    ''' Test if augmented eval works '''
+    y_true = np.array([0,1])
+    y_augment= np.array([0,0,1,1])
+    ids = np.array([3,3,4,4])
+    y_result, _ = augmented_eval(y_augment, y_augment, ids, ids)
+    assert(np.all(y_result == y_true))
 
 
 @attr('slow', 'scala')

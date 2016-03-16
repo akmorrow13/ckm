@@ -33,7 +33,7 @@ libraryDependencies ++= Seq(
 
 
 {
-  val defaultSparkVersion = "1.6.0"
+  val defaultSparkVersion = "1.5.0-cdh5.5.1"
   val sparkVersion =
     scala.util.Properties.envOrElse("SPARK_VERSION", defaultSparkVersion)
   val excludeHadoop = ExclusionRule(organization = "org.apache.hadoop")
@@ -42,7 +42,7 @@ libraryDependencies ++= Seq(
     "org.apache.spark" % "spark-core_2.10" % sparkVersion excludeAll(excludeHadoop),
     "org.apache.spark" % "spark-mllib_2.10" % sparkVersion excludeAll(excludeHadoop),
     "org.apache.spark" % "spark-sql_2.10" % sparkVersion excludeAll(excludeHadoop),
-    "edu.berkeley.cs.amplab" % "keystoneml_2.10" % "0.2.1" excludeAll(excludeHadoop, excludeSpark), 
+    "edu.berkeley.cs.amplab" % "keystoneml_2.10" % "0.3.0-SNAPSHOT" excludeAll(excludeHadoop, excludeSpark), 
     "org.yaml" % "snakeyaml" % "1.16",
     "org.apache.commons" % "commons-csv" % "1.2",
     "com.amazonaws" % "aws-java-sdk" % "1.9.40",
@@ -62,7 +62,7 @@ dependencyOverrides ++= Set(
 )
 
 {
-  val defaultHadoopVersion = "2.6.0"
+  val defaultHadoopVersion = "2.6.0-cdh5.5.1"
   val hadoopVersion =
     scala.util.Properties.envOrElse("SPARK_HADOOP_VERSION", defaultHadoopVersion)
   libraryDependencies ++= Seq("org.apache.hadoop" % "hadoop-aws" % hadoopVersion,

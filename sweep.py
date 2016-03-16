@@ -1,23 +1,25 @@
 from experiments import *
 import pickle
+import yaml
 
-base_exp =  load(open("sample_python.exp"))
+base_exp =  load(open("./keystone_pipeline/cifar_cluster.exp"))
+base_exp['expid'] = "4x4x128_gamma_reg_sweep"
 # 1 Layer sweep
-for numFeatures in [50, 100, 200]:
-    for reg in [0.01, 0.001]:
-        for center in [True, False]:
-            for weight in [1.414, 1.0, 3]:
-                exp = base_exp.copy()
-                exp["filters"] = [numFeatures]
-                exp["reg"] = reg
-                exp["center"] = center
-                exp["weight"] = weight
-                exp["verbose"] = True
-                print "Experiment Parameters:"
-                print exp
-                results = python_run(exp)
-                print tabulate(results, headers="keys")
-                print "==========================================="
+results = []
+for gamma in [1e-6, 5e-6, 1e-7]:
+    for reg in [1e-3, 5e-3, 1e-4]:
+        exp_copy = base_exp.copy()
+        exp_copy["kernelGamma"] = gamma
+        fname = "/tmp/gamma_reg_sweep_{0}_{1}".format(gamma,  reg)
+        sweep_file = open(fname, "w+")
+        yaml.dump(exp_copy, sweep_file)
+        sweep_file.close()
+        result = scala_run(exp_copy, fname)
+        results.append(result)
 
-
-
+for i,r in enumerate(results):
+    if (i == 0):
+        header = True
+    else:
+        header = False
+    print r.to_csv(header=header)
