@@ -14,6 +14,7 @@ import os
 import subprocess
 
 from tabulate import tabulate
+import time
 
 from softmax import *
 
@@ -30,8 +31,12 @@ def main():
     parser.add_argument('config', help='path to config file for experiment')
     args = parser.parse_args()
     exp = parse_experiment(args.config)
+
+    conf_file = open("/tmp/ckn_" + str(time.time()), "w+")
+    dump(exp, conf_file)
+    conf_file.close()
+
     logging.info('Experiment mode: {0}'.format(exp.get("mode")))
-    print exp
     if (exp.get("mode") == "python"):
         results = python_run(exp)
     elif (exp.get("mode") == "scala"):
@@ -117,6 +122,7 @@ def scala_run(exp, yaml_path):
         # TODO: Do more interesting things here
         if exp.get('augment'):
             y_train_weights, y_test_weights = augmented_eval(y_train_weights, y_test_weights, ids_train, ids_test)
+
         y_train_pred = np.argmax(y_train_weights, axis=1)
         y_test_pred = np.argmax(y_test_weights, axis=1)
 
@@ -128,10 +134,8 @@ def scala_run(exp, yaml_path):
         return None
 
 def augmented_eval(y_train_weights, y_test_weights, ids_train, ids_test):
-    grouped_train = np.array(map(lambda x: map(lambda y: y[1], x[1])[0], groupby(zip(ids_train, y_train_weights), lambda z: z[0])))
-    grouped_test = np.array(map(lambda x: map(lambda y: y[1], x[1])[0], groupby(zip(ids_test, y_test_weights), lambda z: z[0])))
-    y_train_weights_avg = map(lambda  x: np.average(x), grouped_train)
-    y_test_weights_avg = map(lambda  x: np.average(x), grouped_test)
+    y_train_weights_avg = np.array(map(lambda x: np.average(np.array(map(lambda y: y[1], x[1])), axis=0), groupby(zip(ids_train, y_train_weights), lambda z: z[0])))
+    y_test_weights_avg = np.array(map(lambda x: np.average(np.array(map(lambda y: y[1], x[1])), axis=0), groupby(zip(ids_test, y_test_weights), lambda z: z[0])))
     return y_train_weights_avg, y_test_weights_avg
 
 def gen_features(exp, X_train, X_test, seed):
