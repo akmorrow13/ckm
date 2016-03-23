@@ -40,13 +40,11 @@ def load_cifar(center=False):
     cifar_out = unpickle("./mldata/cifarpy/test_batch")
     X_test = cifar_out["data"].reshape(-1, 32*32, 3)
     X_test = X_test.reshape(-1,3,32,32).transpose(0,2,3,1).reshape(-1,32*32, 3)
-    if center:
-        X_train = X_train - mean_image
-        X_test = X_test - mean_image
+    X_train = X_train - mean_image
+    X_test = X_test - mean_image
     y_test = cifar_out["labels"]
 
     return (X_train, np.array(y_train)), (X_test, np.array(y_test))
-
 
 def load_data(dataset="mnist_small", center=False):
     '''
@@ -113,6 +111,13 @@ def gaussian_pool(x, pool_size, imsize):
         x_out[:,:,i] = scipy.ndimage.filters.gaussian_filter(x[:,:,i], pool_size/np.sqrt(2))
     return flatten(x_out[::pool_size, ::pool_size,:])
 
+def build_whitener(x, reg):
+    U,S,V = np.linalg.svd(x.T.dot(x))
+    e = np.dot(U, 1.0/np.sqrt(np.diag(S) + reg))
+    print e.shape
+    ZCAMatrix = np.dot(e, U.T)
+    return ZCAMatrix
+
 def patchify_all_imgs(X, patch_shape, pad=True, pad_mode='constant', cval=0):
     out = []
     for x in X:
@@ -162,28 +167,60 @@ def learn_gamma(patches, sample_size=3000, percentile=10, weight=1.414):
 
 
 
-def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=True, random_state=RANDOM_STATE, weight=1.414):
+def ckm_apply(X_train, X_test, patch_shape, gamma, n_components, pool=2, random_state=RANDOM_STATE, weight=1.414, whiten=True, numChannels=1):
     patches_train = patchify_all_imgs(X_train, patch_shape, pad=False)
+    patches_flat = patches_train.reshape(-1, patch_shape[0]*patch_shape[1]*numChannels)
+
+    # Whiten!
+    indices = np.random.choice(patches_flat.shape[0], 10000, False)
+    if (whiten):
+        print "Building whitener"
+        print "Size ", len(indices)
+        whitener = build_whitener(patches_flat[indices], 0.1)
+        print whitener.shape
+        print "Whitening all data"
+        patches_flat = patches_flat.dot(whitener.T)
+        patches_train = patches_flat.reshape(patches_train.shape)
+
+
     if (gamma == None):
-        #print "USING LEARNED GAMMA ", learn_gamma(patches_train)
         gamma = learn_gamma(patches_train)
+        print "USING LEARNED GAMMA ", gamma
 
     patch_rbf = RBFSampler(gamma=gamma, random_state=random_state, n_components=n_components).fit(np.zeros((1,patch_shape[0]*patch_shape[1]*X_train.shape[-1])))
     #print "Generated train patches"
     #print "Patches_train size", patches_train.shape
     #print "RBF map shape", patch_rbf.random_weights_.shape
+
+    print "Starting Convolution  train"
+    ts = time.time()
     X_patch_lift_train = apply_patch_rbf(X_train, X_train.shape[1], patches_train, patch_rbf.random_weights_, patch_rbf.random_offset_)
+    print "Convolution train done ", time.time() - ts
     #print "Lifted train"
     patches_test = patchify_all_imgs(X_test, patch_shape, pad=False)
+    patches_test_flat = patches_test.reshape(-1, patch_shape[0]*patch_shape[1]*numChannels)
+    if (whiten):
+        print "Whitening test data"
+        patches_test_flat = patches_test_flat.dot(whitener.T)
+        patches_test = patches_test_flat.reshape(patches_test.shape)
+
+
     #print "Generated test patches"
+    print "Starting Convolution  test"
+    ts = time.time()
     X_patch_lift_test = apply_patch_rbf(X_test, X_test.shape[1], patches_test, patch_rbf.random_weights_, patch_rbf.random_offset_)
+    print "Convolution test done ", time.time() - ts
     #print "Lifted test"
     #print "Pre pool shape", X_patch_lift_train.shape
     #print patches_train.shape
     imsize = (np.sqrt(patches_train.shape[1]), np.sqrt(patches_train.shape[1]), patch_rbf.n_components)
-    if (pool):
-        X_out_train = np.array([ gaussian_pool(x,2,imsize)  for x in X_patch_lift_train])
-        X_out_test = np.array([ gaussian_pool(x,2,imsize)  for x in X_patch_lift_test])
+
+    if (pool != 1):
+        print "Starting pool "
+        ts = time.time()
+        X_out_train = np.array([ gaussian_pool(x,pool,imsize)  for x in X_patch_lift_train])
+        X_out_test = np.array([ gaussian_pool(x,pool,imsize)  for x in X_patch_lift_test])
+        print "Pool done ", time.time() - ts
     else:
         X_out_train = X_patch_lift_train
         X_out_test = X_patch_lift_test
