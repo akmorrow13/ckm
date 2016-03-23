@@ -5,7 +5,7 @@ import breeze.linalg._
 import breeze.numerics._
 import breeze.stats.{mean, median}
 import evaluation.{AugmentedExamplesEvaluator, MulticlassClassifierEvaluator}
-import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader}
+import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader, ImageNetLoader}
 import nodes.images._
 import workflow.Transformer
 import nodes.learning._
@@ -176,11 +176,25 @@ object CKM extends Serializable with Logging {
       val randomFeatures = SeededCosineRandomFeatures(outFeatures, conf.cosineFeatures,  conf.cosineGamma, 24) andThen new Cacher[DenseVector[Double]]
       featurizer = featurizer andThen randomFeatures
     }
+    
+    val dataLoadBegin = System.nanoTime
+    data.train.count()
+    data.test.count()
+    val dataLoadTime = timeElapsed(dataLoadBegin)
+    println(s"Loading data took ${dataLoadTime} secs")
 
+
+    val convTrainBegin = System.nanoTime
     var XTrain = featurizer(data.train)
     val count = XTrain.count()
+    val convTrainTime  = timeElapsed(convTrainBegin)
+    println(s"Generating train features took ${convTrainTime} secs")
+
+    val convTestBegin = System.nanoTime
     var XTest = featurizer(data.test)
     XTest.count()
+    val convTestTime  = timeElapsed(convTestBegin)
+    println(s"Generating test features took ${convTestTime} secs")
 
     val numFeatures = XTrain.take(1)(0).size
     val blockSize = conf.blockSize
@@ -254,23 +268,32 @@ object CKM extends Serializable with Logging {
 
   def loadData(sc: SparkContext, dataset: String):Dataset = {
     val (train, test) =
-    if (dataset == "cifar") {
-      val train = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_train.bin").cache
-      val test = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
-      (train, test)
-    } else if (dataset == "mnist") {
-      val train = MnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist", 10, "train").cache
-      val test = MnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist", 10, "test").cache
-      (train, test)
-    } else {
-      val train = SmallMnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist_small", 10, "train").cache
-      val test = SmallMnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist_small", 10, "test").cache
-      (train, test)
-    }
-    train.checkpoint()
-    test.checkpoint()
-    return new Dataset(train, test)
+      if (dataset == "cifar") {
+        val train = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_train.bin").cache
+        val test = CifarLoader2(sc, "/home/eecs/vaishaal/ckm/mldata/cifar/cifar_test.bin").cache
+        (train, test)
+      } else if (dataset == "mnist") {
+        val train = MnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist", 10, "train").cache
+        val test = MnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist", 10, "test").cache
+        (train, test)
+      } else if (dataset == "mnist_small") {
+        val train = SmallMnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist_small", 10, "train").cache
+        val test = SmallMnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist_small", 10, "test").cache
+        (train, test)
+      } else if (dataset == "imagenet") {
+        val train = ImageNetLoader(sc, "/user/vaishaal/imagenet-train-all-scaled-tar", 
+          "/home/eecs/vaishaal/ckm/mldata/imagenet/imagenet-labels").cache()
+        val test = ImageNetLoader(sc, "/user/vaishaal/imagenet-validation-all-scaled-tar", 
+          "/home/eecs/vaishaal/ckm/mldata/imagenet/imagenet-labels").cache()
+        (train, test)
+      } else {
+        throw new IllegalArgumentException("Unknown Dataset")
+      }
+      train.checkpoint()
+      test.checkpoint()
+      return new Dataset(train, test)
   }
+  def timeElapsed(ns: Long) : Double = (System.nanoTime - ns).toDouble / 1e9 
 
   def getInfo(data: Dataset): (Int, Int, Int) = {
     val image = data.train.take(1)(0).image
