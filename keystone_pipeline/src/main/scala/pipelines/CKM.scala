@@ -104,6 +104,7 @@ object CKM extends Serializable with Logging {
     }
 
     val (xDim, yDim, numChannels) = getInfo(data)
+    println(s"Info ${xDim}, ${yDim}, ${numChannels}")
     var numInputFeatures = numChannels
     var currX = xDim
     var currY = yDim
@@ -281,11 +282,18 @@ object CKM extends Serializable with Logging {
         val test = SmallMnistLoader(sc, "/home/eecs/vaishaal/ckm/mldata/mnist_small", 10, "test").cache
         (train, test)
       } else if (dataset == "imagenet") {
-        val train = ImageNetLoader(sc, "/user/vaishaal/imagenet-train-all-scaled-tar", 
-          "/home/eecs/vaishaal/ckm/mldata/imagenet/imagenet-labels").cache()
-        val test = ImageNetLoader(sc, "/user/vaishaal/imagenet-validation-all-scaled-tar", 
-          "/home/eecs/vaishaal/ckm/mldata/imagenet/imagenet-labels").cache()
+        val train = ImageNetLoader(sc, "/user/vaishaal/imagenet-train-brewed", 
+          "/home/eecs/vaishaal/ckm/mldata/imagenet/imagenet-labels").cache
+        val test = ImageNetLoader(sc, "/user/vaishaal/imagenet-validation-brewed", 
+          "/home/eecs/vaishaal/ckm/mldata/imagenet/imagenet-labels").cache
         (train, test)
+      } else if (dataset == "imagenet-small") {
+        val train = ImageNetLoader(sc, "/user/vaishaal/imagenet-train-brewed-small", 
+          "/home/eecs/vaishaal/ckm/mldata/imagenet-small/imagenet-small-labels").cache
+        val test = ImageNetLoader(sc, "/user/vaishaal/imagenet-validation-brewed-small",
+          "/home/eecs/vaishaal/ckm/mldata/imagenet-small/imagenet-small-labels").cache
+
+        (train.repartition(200), test.repartition(200))
       } else {
         throw new IllegalArgumentException("Unknown Dataset")
       }
