@@ -77,6 +77,7 @@ def python_run(exp):
 
     y_train_pred, y_test_pred = solve(exp, X_train_lift, y_train, X_test_lift, y_test, seed)
     runtime =  time.time() - start_time
+
     results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
     results.insert(len(results.columns), "runtime",  runtime)
     return results
@@ -129,6 +130,11 @@ def scala_run(exp, yaml_path):
         runtime =  time.time() - start_time
         results = compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred)
         results.insert(len(results.columns), "runtime",  runtime)
+
+        if (exp.get("numClasses", 2) >= 5):
+            top5_train, top5_test = compute_top5_acc(y_train, y_train_weights, y_test, y_test_weights)
+            results.insert(len(results.columns), "top5_train_acc", top5_train)
+            results.insert(len(results.columns), "top5_test_acc", top5_test)
         return results
     else:
         return None
@@ -236,6 +242,14 @@ def compute_metrics(exp, y_train, y_train_pred, y_test, y_test_pred):
     df.insert(len(df.columns), "test_acc", test_acc)
     return df
 
+def compute_top5_acc(y_train, y_train_weights, y_test, y_test_weights):
+    top5_train = y_train_weights.argsort(axis=1)[:,-5:]
+    top5_test = y_test_weights.argsort(axis=1)[:,-5:]
+    train_res = np.any(np.equal(y_train[:,np.newaxis],top5_train), axis=1)
+    test_res = np.any(np.equal(y_test[:,np.newaxis],top5_test), axis=1)
+    test_acc = test_res.sum()/(1.0*len(test_res))
+    train_acc = train_res.sum()/(1.0*len(train_res))
+    return train_acc, test_acc
 
 def build_ckm(exp, seed):
     layers = exp.get("layers")

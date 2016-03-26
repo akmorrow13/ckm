@@ -177,7 +177,7 @@ object CKM extends Serializable with Logging {
       val randomFeatures = SeededCosineRandomFeatures(outFeatures, conf.cosineFeatures,  conf.cosineGamma, 24) andThen new Cacher[DenseVector[Double]]
       featurizer = featurizer andThen randomFeatures
     }
-    
+
     val dataLoadBegin = System.nanoTime
     data.train.count()
     data.test.count()
@@ -231,10 +231,11 @@ object CKM extends Serializable with Logging {
 
         val yTrainPred = MaxClassifier.apply(trainPredictions)
         val yTestPred =  MaxClassifier.apply(testPredictions)
+
         val (trainEval, testEval) =
         if (!conf.augment) {
-          val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), 10)
-          val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), 10)
+          val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), conf.numClasses)
+          val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), conf.numClasses)
           (trainEval.totalError, testEval.totalError)
         } else {
             val trainEval = AugmentedExamplesEvaluator(
@@ -243,6 +244,16 @@ object CKM extends Serializable with Logging {
               testIds, testPredictions, LabelExtractor(data.test), conf.numClasses)
             (trainEval.totalError, testEval.totalError)
         }
+
+        if (conf.numClasses >= 5) {
+
+          val testLabels = labelVectorizer(LabelExtractor(data.test))
+          val top5Predicted = TopKClassifier(5)(testPredictions)
+          val top1Actual = TopKClassifier(1)(testLabels)
+
+           println("Top 5 test acc is " + (100 - Stats.getErrPercent(top5Predicted, top1Actual, testPredictions.count())) + "%")
+        }
+
         println(s"total training accuracy ${1 - trainEval}")
         println(s"total testing accuracy ${1 - testEval}")
 
