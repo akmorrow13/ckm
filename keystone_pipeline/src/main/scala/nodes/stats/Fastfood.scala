@@ -1,0 +1,45 @@
+package nodes.stats
+
+import breeze.linalg._
+import breeze.numerics._
+import breeze.numerics.cos
+import breeze.stats.distributions.{Rand, ChiSquared, Bernoulli}
+import org.apache.spark.rdd.RDD
+import utils.{MatrixUtils, FWHT}
+import workflow.Transformer
+
+
+class Fastfood(
+  val g: DenseVector[Double], // should be out long
+  val b: DenseVector[Double], // should be out long
+  val out: Int // Num output features
+  ) // should be numOutputFeatures by 1
+  extends Transformer[DenseVector[Double], DenseVector[Double]] {
+
+  assert(g.size == out)
+  assert(FWHT.isPower2(out))
+
+  var B = DenseVector.rand(out, new Bernoulli(0.5)).map(if (_) -1.0 else 1.0)
+  val P:IndexedSeq[Int] = Rand.permutation(out).draw()
+  val Gnorm:Double = pow(norm(g), -0.5)
+  val S = (DenseVector.rand(out, ChiSquared(out)) :^ 0.5) * Gnorm
+
+  override def apply(in: DenseVector[Double]): DenseVector[Double] =  {
+    val d = FWHT.nextPower2(in.size).toInt
+    val inPad = padRight(in, d, 0.0)
+    val blocks =  
+      for (i <- List.range(0, out/d)) yield processBlock(inPad, g(i*d until (i+1)*d), B(i*d until (i+1)*d), P.slice(i*d,(i+1)*d), S(i*d until (i+1)*d))
+    var outVector = DenseVector.vertcat(blocks:_*)
+    outVector :+ b
+    cos.inPlace(outVector)
+    outVector
+  }
+
+  def processBlock(in: DenseVector[Double], G: DenseVector[Double], B: DenseVector[Double], P: IndexedSeq[Int], S: DenseVector[Double]): DenseVector[Double] = {
+    val d = in.size
+    var W:DenseVector[Double] = FWHT(B :* in)
+    val PW:DenseVector[Double] = W(P).toDenseVector
+    S :* FWHT(G :* PW)
+  }
+}
+

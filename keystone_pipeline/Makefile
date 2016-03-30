@@ -3,7 +3,7 @@ $(error JAVA_HOME must be set.)
 endif
 
 SCALA_VERSION = 2.10
-PROJECT = solarflares
+PROJECT = ckm
 PROJECT_VERSION = 0.1
 TARGET_JAR = target/scala-$(SCALA_VERSION)/$(PROJECT)-assembly-$(PROJECT_VERSION).jar
 
