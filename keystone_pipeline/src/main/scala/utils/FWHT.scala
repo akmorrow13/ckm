@@ -14,7 +14,7 @@ object FWHT {
   def apply(x: DenseVector[Double]): DenseVector[Double] =  {
     assert(isPower2(x.size))
     val arr:Array[Double] = x.data
-    new DenseVector(extLib.fwht(arr))
+    new DenseVector(extLib.fwht(arr, x.size))
   }
 
   def isPower2(num: Int) = {

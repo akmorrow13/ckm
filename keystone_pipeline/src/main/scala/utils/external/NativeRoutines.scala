@@ -15,5 +15,5 @@ class NativeRoutines extends Serializable {
     maxVal: Double = 0.0, alpha: Double = 0.0, image: Array[Double]): Array[Double]
 
   @native
-  def fwht(in: Array[Double]) : Array[Double]
+  def fwht(in: Array[Double], length: Int) : Array[Double]
 }

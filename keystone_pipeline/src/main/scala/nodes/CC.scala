@@ -3,6 +3,7 @@ package nodes.images
 import breeze.linalg._
 import breeze.numerics._
 import nodes.learning.ZCAWhitener
+import nodes.stats.Fastfood
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import pipelines._
@@ -134,18 +135,21 @@ object CC {
 
     val patchNorms = norm(whitenedImage :+ whitenerOffset, Axis._1)
     val normalizedPatches = whitenedImage(::, *) :/ patchNorms
-    var convRes:DenseMatrix[Double] = 
+    var convRes:DenseMatrix[Double] =
     if (!fastfood) {
-      normalizedPatches * new DenseMatrix(out, in, convolutions)
+      val convRes = normalizedPatches * new DenseMatrix(out, in, convolutions)
+      convRes(*, ::) :+= phase
+      cos.inPlace(convRes)
+      if (insanity) {
+        convRes(::,*) :*= patchNorms
+      }
+      convRes
     } else {
-        throw new IllegalArgumentException("Fastfood Unimplemented")
+      val ff = new Fastfood(new DenseVector(convolutions), phase, out)
+      val ff_out = MatrixUtils.matrixToRowArray(normalizedPatches).map(ff(_))
+      MatrixUtils.rowsToMatrix(ff_out)
     }
 
-    convRes(*, ::) :+= phase
-    cos.inPlace(convRes)
-    if (insanity) {
-      convRes(::,*) :*= patchNorms
-    }
     val res = new RowMajorArrayVectorizedImage(
       convRes.toArray,
       ImageMetadata(resWidth, resHeight, out))
