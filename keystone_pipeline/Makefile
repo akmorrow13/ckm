@@ -3,7 +3,7 @@ $(error JAVA_HOME must be set.)
 endif
 
 SCALA_VERSION = 2.10
-PROJECT = solarflares
+PROJECT = ckm
 PROJECT_VERSION = 0.1
 TARGET_JAR = target/scala-$(SCALA_VERSION)/$(PROJECT)-assembly-$(PROJECT_VERSION).jar
 
@@ -13,7 +13,7 @@ CC = g++
 UNAME := $(shell uname -sm)
 
 Darwin_x86_64_CFLAGS := -O3
-Linux_x86_64_CFLAGS := -O3 -fPIC -fopenmp -shared
+Linux_x86_64_CFLAGS := -O3 -fPIC -fopenmp -shared -march=native -std=c99 -pedantic -Wall -Wshadow -Wpointer-arith -Wcast-qual -Wstrict-prototypes -Wmissing-prototypes
 
 CFLAGS ?= $($(shell echo "$(UNAME)" | tr \  _)_CFLAGS)
 

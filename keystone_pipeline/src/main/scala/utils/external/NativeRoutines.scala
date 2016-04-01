@@ -13,4 +13,7 @@ class NativeRoutines extends Serializable {
   def poolAndRectify(stride: Int, poolSize: Int,
     numChannels: Int = 3, xDim: Int, yDim: Int,
     maxVal: Double = 0.0, alpha: Double = 0.0, image: Array[Double]): Array[Double]
+
+  @native
+  def fwht(in: Array[Double], length: Int) : Array[Double]
 }

@@ -14,10 +14,29 @@
 #include <fstream>
 #include <algorithm>
 
+#include "fht_header_only.h"
 #include "NativeRoutines.h"
 
 static inline jint imageToVectorCoords(jint x, jint y, jint c, jint yDim, jint xDim) {
   return y + x * yDim + c * yDim * xDim;
+}
+
+JNIEXPORT jdoubleArray JNICALL Java_utils_external_NativeRoutines_fwht(
+    JNIEnv* env,
+    jobject obj,
+    jdoubleArray input,
+    jint length)
+{
+
+  jdouble* inputVector = env->GetDoubleArrayElements(input, 0);
+  jdouble* outVector = (jdouble*) malloc(length*sizeof(double));
+  memcpy(outVector, inputVector, length*sizeof(double));
+  /* TODO: Don't hard code this? */
+  FHTDouble(outVector, length, 2048);
+  jdoubleArray result = env->NewDoubleArray(length);
+  env->SetDoubleArrayRegion(result, 0, length, outVector);
+  free(outVector);
+  return result;
 }
 
 JNIEXPORT jdoubleArray JNICALL Java_utils_external_NativeRoutines_poolAndRectify (

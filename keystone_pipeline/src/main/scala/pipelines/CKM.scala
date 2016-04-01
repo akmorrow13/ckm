@@ -128,7 +128,7 @@ object CKM extends Serializable with Logging {
       numOutputFeatures = conf.filters(0)
       val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
       val seed = conf.seed
-      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, Some(whitener), conf.whitenerOffset, conf.pool(0), conf.insanity)
+      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(0), currX, currY, numInputFeatures, Some(whitener), conf.whitenerOffset, conf.pool(0), conf.insanity, conf.fastfood)
       if (conf.pool(0) > 1) {
         var pooler =  new Pooler(conf.poolStride(0), conf.pool(0), identity, (x:DenseVector[Double]) => mean(x))
         convKernel = convKernel andThen ccap andThen pooler
@@ -149,7 +149,7 @@ object CKM extends Serializable with Logging {
       numOutputFeatures = conf.filters(i)
       val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
       val seed = conf.seed + i
-      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(i), currX, currY, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity)
+      val ccap = new CC(numInputFeatures*patchSize, numOutputFeatures,  seed, conf.bandwidth(i), currX, currY, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity, conf.fastfood)
 
       if (conf.pool(i) > 1) {
         var pooler =  new Pooler(conf.poolStride(i), conf.pool(i), identity, (x:DenseVector[Double]) => mean(x))
@@ -166,8 +166,6 @@ object CKM extends Serializable with Logging {
     val outFeatures = currX * currY * numOutputFeatures
 
     val meta = data.train.take(1)(0).image.metadata
-    val first_pixel = data.train.take(1)(0).image.get(15,7,0)
-    println(s"First Pixel: ${first_pixel}")
     val featurizer1 = ImageExtractor  andThen convKernel
     val featurizer2 = ImageVectorizer andThen new Cacher[DenseVector[Double]]
 
@@ -353,6 +351,7 @@ object CKM extends Serializable with Logging {
     @BeanProperty var  augment: Boolean = false
     @BeanProperty var  augmentPatchSize: Int = 24
     @BeanProperty var  augmentType: String = "random"
+    @BeanProperty var  fastfood: Boolean = false
   }
 
 

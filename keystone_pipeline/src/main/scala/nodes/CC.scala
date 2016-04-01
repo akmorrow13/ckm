@@ -3,6 +3,7 @@ package nodes.images
 import breeze.linalg._
 import breeze.numerics._
 import nodes.learning.ZCAWhitener
+import nodes.stats.Fastfood
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import pipelines._
@@ -31,7 +32,8 @@ class CC(
     whitener: Option[ZCAWhitener] = None,
     whitenerOffset: Double = 1e-12,
     poolSize: Int = 1,
-    insanity: Boolean = false
+    insanity: Boolean = false,
+    fastfood: Boolean = false
     )
   extends Transformer[Image, Image] {
 
@@ -48,7 +50,7 @@ class CC(
     println(s"First pixel ${in.take(1)(0).get(0,0,0)}")
 
     in.mapPartitions(CC.convolvePartitions(_, resWidth, resHeight, imgChannels, convSize,
-      whitener, whitenerOffset, numInputFeatures, numOutputFeatures, seed, bandwidth, insanity))
+      whitener, whitenerOffset, numInputFeatures, numOutputFeatures, seed, bandwidth, insanity, fastfood))
   }
 
   def apply(in: Image): Image = {
@@ -60,7 +62,7 @@ class CC(
     val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
     CC.convolve(in, patchMat, resWidth, resHeight,
-      imgChannels, convSize, whitener, whitenerOffset, convolutions, phase, insanity)
+      imgChannels, convSize, whitener, whitenerOffset, convolutions.data, phase, insanity, None, numOutputFeatures, numInputFeatures)
   }
 }
 
@@ -110,13 +112,16 @@ object CC {
       convSize: Int,
       whitener: Option[ZCAWhitener],
       whitenerOffset: Double,
-      convolutions: DenseMatrix[Double],
+      convolutions: Array[Double],
       phase: DenseVector[Double],
-      insanity: Boolean
+      insanity: Boolean,
+      fastfood: Option[Fastfood],
+      out: Int,
+      in: Int
       ): Image = {
 
     val imgMat = makePatches(img, patchMat, resWidth, resHeight, imgChannels, convSize,
-      whitener) 
+      whitener)
 
     val whitenedImage =
     whitener match  {
@@ -130,16 +135,23 @@ object CC {
 
     val patchNorms = norm(whitenedImage :+ whitenerOffset, Axis._1)
     val normalizedPatches = whitenedImage(::, *) :/ patchNorms
-    var convRes: DenseMatrix[Double] = normalizedPatches * convolutions
-
-    convRes(*, ::) :+= phase
-    cos.inPlace(convRes)
-    if (insanity) {
-      convRes(::,*) :*= patchNorms
+    var convRes:DenseMatrix[Double] =
+    fastfood.map { ff =>
+      val ff_out = MatrixUtils.matrixToRowArray(normalizedPatches).map(ff(_))
+      MatrixUtils.rowsToMatrix(ff_out)
+    } getOrElse {
+      val convRes = normalizedPatches * (new DenseMatrix(out, in, convolutions)).t
+      convRes(*, ::) :+= phase
+      cos.inPlace(convRes)
+      if (insanity) {
+        convRes(::,*) :*= patchNorms
+      }
+      convRes
     }
+
     val res = new RowMajorArrayVectorizedImage(
       convRes.toArray,
-      ImageMetadata(resWidth, resHeight, convolutions.cols))
+      ImageMetadata(resWidth, resHeight, out))
     res
   }
 
@@ -201,18 +213,30 @@ object CC {
       numOutputFeatures: Int,
       seed: Int,
       bandwidth: Double,
-      insanity: Boolean
+      insanity: Boolean,
+      fastfood: Boolean
       ): Iterator[Image] = {
 
     var patchMat = new DenseMatrix[Double](resWidth*resHeight, convSize*convSize*imgChannels)
-
       implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(seed)))
     val gaussian = new Gaussian(0, 1)
     val uniform = new Uniform(0, 1)
-    val convolutions = (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).t
-    val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
-    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, convSize,
-      whitener, whitenerOffset, convolutions, phase, insanity))
+    val convolutions = 
+    if (!fastfood) {
+      (DenseMatrix.rand(numOutputFeatures, numInputFeatures, gaussian) :* bandwidth).data
+    } else {
+      (DenseVector.rand(numOutputFeatures, gaussian) :* bandwidth).data 
+    }
 
+    val phase = DenseVector.rand(numOutputFeatures, uniform) :* (2*math.Pi)
+    val ff = 
+      if (fastfood) {
+        Some(new Fastfood(DenseVector(convolutions), phase, numOutputFeatures))
+      } else {
+        None
+      }
+
+    imgs.map(convolve(_, patchMat, resWidth, resHeight, imgChannels, convSize,
+      whitener, whitenerOffset, convolutions, phase, insanity, ff, numOutputFeatures, numInputFeatures))
   }
 }
