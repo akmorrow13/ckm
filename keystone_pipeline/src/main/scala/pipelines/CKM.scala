@@ -4,10 +4,11 @@ import breeze.stats.distributions._
 import breeze.linalg._
 import breeze.numerics._
 import breeze.stats.{mean, median}
-import evaluation.{AugmentedExamplesEvaluator, MulticlassClassifierEvaluator}
 import loaders.{CifarLoader, CifarLoader2, MnistLoader, SmallMnistLoader, ImageNetLoader}
 import nodes.images._
 import workflow.Transformer
+import evaluation.MulticlassClassifierEvaluator
+
 import nodes.learning._
 import nodes.stats.{StandardScaler, Sampler, SeededCosineRandomFeatures, BroadcastCosineRandomFeatures, CosineRandomFeatures}
 import nodes.util.{Identity, Cacher, ClassLabelIndicatorsFromIntLabels, TopKClassifier, MaxClassifier, VectorCombiner}
@@ -76,32 +77,6 @@ object CKM extends Serializable with Logging {
     var numOutputFeatures = 0
     var trainIds = data.train.zipWithUniqueId.map(x => x._2.toInt)
     var testIds = data.test.zipWithUniqueId.map(x => x._2.toInt)
-    data =
-    if (conf.augment) {
-      /* Augment always blows up data set by 10 (for now)
-       * TODO: Make this more modular?
-       * */
-      val labelAugmenter = new LabelAugmenter[Int](10)
-      val trainAugment =
-        if (conf.augmentType  == "random") {
-          RandomFlipper(0.5).apply(
-            RandomPatcher(10, conf.augmentPatchSize, conf.augmentPatchSize).apply(
-              ImageExtractor(data.train)))
-        } else {
-          CenterCornerPatcher(conf.augmentPatchSize, conf.augmentPatchSize, true).apply(ImageExtractor(data.train))
-        }
-        val testAugment = CenterCornerPatcher(conf.augmentPatchSize, conf.augmentPatchSize, true).apply(ImageExtractor(data.test))
-
-        val trainLabelsAugmented = labelAugmenter.apply(LabelExtractor(data.train))
-        val testLabelsAugmented = labelAugmenter.apply(LabelExtractor(data.test))
-        val augmentedTrain = trainAugment.zip(trainLabelsAugmented).map(x => LabeledImage(x._1,x._2))
-        val augmentedTest = testAugment.zip(testLabelsAugmented).map(x => LabeledImage(x._1,x._2))
-        trainIds = labelAugmenter.apply(trainIds)
-        testIds = labelAugmenter.apply(testIds)
-        new Dataset(augmentedTrain, augmentedTest)
-    } else {
-      data
-    }
 
     val (xDim, yDim, numChannels) = getInfo(data)
     println(s"Info ${xDim}, ${yDim}, ${numChannels}")
@@ -217,31 +192,15 @@ object CKM extends Serializable with Logging {
     val avgEigenValue = (XTrain.map((x:DenseVector[Double]) => mean(x :*  x)).sum()/(1.0*count))
     println(s"Average EigenValue : ${avgEigenValue}")
     if (conf.solve) {
-      val model =
-      if (conf.solver ==  "kernel" ) {
-      val kernelGen = new GaussianKernelGenerator(conf.kernelGamma, XTrain)
-       new KernelRidgeRegression(kernelGen, conf.reg, conf.blockSize, conf.numIters, Some(895423832L)).fit(XTrain, yTrain)
-     } else {
-      new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
-    }
+        val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
         val trainPredictions = model.apply(XTrain).cache()
         val testPredictions =  model.apply(XTest).cache()
 
         val yTrainPred = MaxClassifier.apply(trainPredictions)
         val yTestPred =  MaxClassifier.apply(testPredictions)
 
-        val (trainEval, testEval) =
-        if (!conf.augment) {
-          val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), conf.numClasses)
-          val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), conf.numClasses)
-          (trainEval.totalError, testEval.totalError)
-        } else {
-            val trainEval = AugmentedExamplesEvaluator(
-              trainIds, trainPredictions, LabelExtractor(data.train), conf.numClasses)
-            val testEval = AugmentedExamplesEvaluator(
-              testIds, testPredictions, LabelExtractor(data.test), conf.numClasses)
-            (trainEval.totalError, testEval.totalError)
-        }
+        val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), conf.numClasses)
+        val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), conf.numClasses)
 
         if (conf.numClasses >= 5) {
 
@@ -252,8 +211,8 @@ object CKM extends Serializable with Logging {
            println("Top 5 test acc is " + (100 - Stats.getErrPercent(top5Predicted, top1Actual, testPredictions.count())) + "%")
         }
 
-        println(s"total training accuracy ${1 - trainEval}")
-        println(s"total testing accuracy ${1 - testEval}")
+        println(s"total training accuracy ${1 - trainEval.totalError}")
+        println(s"total testing accuracy ${1 - testEval.totalError}")
 
         val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
         val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
