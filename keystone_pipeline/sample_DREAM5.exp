@@ -1,0 +1,20 @@
+# General parameters
+dataset:  sample_DREAM5
+expid: DREAM5_small
+mode: scala
+seed: 0
+numClasses: 10 # TODO: should be continuous
+dimensions: 1
+
+# CKM Parameters
+layers: 1
+patch_sizes: [5, 1]
+bandwidth: [1.8, 2.6] # gaussian parameters
+filters: [50, 200] # filter for layer 1, 2, incrementally increase filter size
+
+# Solver Params
+solve: false
+loss: softmax
+reg: 0.001
+saveFeatures: true
+yarn: True

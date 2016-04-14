@@ -15,7 +15,6 @@ javacOptions ++= Seq("-source", "1.7", "-target", "1.7")
 parallelExecution in Test := false
 
 libraryDependencies ++= Seq(
-  "org.scalatest" %% "scalatest" % "1.9.1" % "test",
   // native libraries are not included by default. add this if you want them (as of 0.7)
   // native libraries greatly improve performance, but increase jar sizes.
   // It also packages various blas implementations, which have licenses that may or may not
@@ -27,7 +26,9 @@ libraryDependencies ++= Seq(
   "io.scif" % "scifio" % "0.27.0",
   "gov.nasa.gsfc.heasarc" % "nom-tam-fits" % "1.14.0-SNAPSHOT",
   "net.imagej" % "imagej" % "2.0.0-rc-42" exclude("io.scif", "scifio"),
-  "com.google.protobuf" % "protobuf-java" % "2.4.1"
+  "com.google.protobuf" % "protobuf-java" % "2.4.1",
+  "org.scalatest" %% "scalatest" % "2.2.4" % "test",
+  "org.scalacheck" %% "scalacheck" % "1.12.2" % "test"
 )
 
 
