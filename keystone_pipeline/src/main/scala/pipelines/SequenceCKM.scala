@@ -216,11 +216,15 @@ object SequenceCKM extends Serializable with Logging {
 
     val trainfilename = dataset + "train"
     val testfilename = dataset + "test"
+    val filePath =
+    if (sc.isLocal)
+      "/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data"
+    else "compbio"
 
     val (train, test) =
       if (dataset == "sample_DREAM5") {
-        val train: RDD[LabeledSequence] = DREAM5Loader(sc, "/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data", 10, "train", trainfilename).cache
-        val test: RDD[LabeledSequence] = DREAM5Loader(sc, "/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data", 10, "test", testfilename).cache
+        val train: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "train", trainfilename).cache
+        val test: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "test", testfilename).cache
         (train, test)
       } else {
         throw new IllegalArgumentException("Unknown Dataset")

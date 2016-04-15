@@ -15,22 +15,21 @@ object ChannelConverter {
     val rows = n + 2 * m - 2
     val cols = 4 // number of bases
 
-    var s = new DenseVector[Double](rows * cols)
-
-    for (i <- Range(1, rows+1)) {
-      for (j <- Range(1, cols+1)) {
-        val pos = (i-1) * cols + j-1
-        if ((i < m) ||  (i >= n + m ) || sequence(i-m) == 'N' ) //TODO: Alyssa is middle one right?
-          s(pos) = 0.25
-        else if (sequence(i - m) == bases(j-1))
-          s(pos) = 1
+    val s: Array[Double] = Array.range(0, (rows * cols)).map(_.toDouble)
+    val mapped = s.zipWithIndex.map { e => {
+      val i = (e._2 / cols)
+      val j = (e._2 % cols)
+      val pos = (i) * cols + j
+      if ((i+1 < m) ||  (i+1 >= n + m ) || sequence(i+1-m) == 'N' ) //TODO: Alyssa is middle one right?
+          0.25
+        else if (sequence(i+1 - m) == bases(j))
+          1
         else
-          s(pos) = 0
+          0
       }
-
     }
 
-    return s
+    return new DenseVector[Double](mapped)
   }
 
 }
