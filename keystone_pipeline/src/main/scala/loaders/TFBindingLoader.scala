@@ -8,10 +8,9 @@ import org.apache.spark.rdd.RDD
 import utils._
 
 import scala.collection.mutable.ListBuffer
-import scala.io.Source
 
 
-class DREAM5TFReader(location: String, fileName: String) {
+class DREAM5TFReader(sc: SparkContext,location: String, fileName: String) {
   // We hardcode this because these are properties of the MNIST dataset.
   val length = 40
   val nchan = 4 // A, T, G, C
@@ -20,26 +19,20 @@ class DREAM5TFReader(location: String, fileName: String) {
   def getLength = length
   def getChannels = nchan
 
+  val lines = sc.textFile(s"${location}/${fileName}")
 
-  var lines = Source.fromFile(s"${location}/${fileName}").getLines
+//  var lines = Source.fromFile(s"${location}/${fileName}").getLines
 
   var X = lines.map(_.split("\t"))
 
-  // remove labels
-  X = X.dropWhile(p => p(2) == "Sequence")
+  // remove labels: should be gone
 
   var sequences =    new ListBuffer[Array[Double]]()
   var labels =    new ListBuffer[Double]()
 
-  X.foreach(r => {
-    //sequences +=  RowMajorArrayVectorizedSequence(ChannelConverter(r(0)).toArray, SequenceMetadata(length, nchan))
-    sequences +=  ChannelConverter(r(2)).toArray
-    labels +=  Math.round(r(3).toFloat)
-  })
+  val tf = X.map(r => (ChannelConverter(r(2)).toArray, r(3).toDouble))
 
-  def collect() = {
-    (sequences zip labels).map(x => (x._1, x._2))
-  }
+  def get(): RDD[(Array[Double], Double)] = tf
 
 }
 
@@ -72,13 +65,15 @@ object DREAM5Loader {
           } else {
             assert(false, "Unknown dataset")
           }
-        lazy val tfReader = new DREAM5TFReader(path, s"${fName}")
-        val rdd = sc.parallelize(tfReader.collect)
+        val tfReader = new DREAM5TFReader(sc, path, s"${fName}")
+        val rdd = tfReader.get
+        println(rdd.count)
+        rdd.persist
         println(s"Saving input sequences to ${fileLocation}")
         val l = tfReader.getLength
         val chan = tfReader.getChannels
-        rdd.map(r => (r._1.mkString(" "), l, chan, r._2))
-            .saveAsTextFile(fileLocation)
+//        rdd.map(r => (r._1.mkString(" "), l, chan, r._2))
+//            .saveAsTextFile(fileLocation)
 
         rdd.map(r => LabeledSequence(RowMajorArrayVectorizedSequence(r._1, SequenceMetadata(l, chan)), r._2))
       }
