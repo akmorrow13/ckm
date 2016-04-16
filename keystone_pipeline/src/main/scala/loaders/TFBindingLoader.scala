@@ -3,6 +3,7 @@ package loaders
 
 import java.nio.file.{Files, Paths}
 
+import breeze.linalg.DenseVector
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import utils._
@@ -10,7 +11,7 @@ import utils._
 import scala.collection.mutable.ListBuffer
 
 
-class DREAM5TFReader(sc: SparkContext,location: String, fileName: String) {
+class DREAM5TFReader(sc: SparkContext,location: String, fileName: String, sample: Boolean = true) {
   // We hardcode this because these are properties of the MNIST dataset.
   val length = 40
   val nchan = 4 // A, T, G, C
@@ -25,8 +26,12 @@ class DREAM5TFReader(sc: SparkContext,location: String, fileName: String) {
 
   val lines = sc.textFile(loc)
 
-  var X = lines.map(_.split("\t"))
 
+  var X = lines.map(_.split("\t"))
+  if (sample) {
+    X = X.sample(false, 0.01)
+    println("samples chosen: ", X.count)
+  }
   var sequences =    new ListBuffer[Array[Double]]()
   var labels =    new ListBuffer[Double]()
 
@@ -39,13 +44,9 @@ class DREAM5TFReader(sc: SparkContext,location: String, fileName: String) {
 
 object DREAM5Loader {
 
-  def apply(sc: SparkContext, path: String, partitions: Int, dataset: String, filename: String): RDD[LabeledSequence] = {
+  def apply(sc: SparkContext, path: String, partitions: Int, dataset: String, filename: String, sample: Boolean = false): RDD[LabeledSequence] = {
 
-    val fileLocation =
-      if(clusterMode)
-
-      else
-        s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/SEQUENCE_INPUT/${filename}"
+    val fileLocation = s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/SEQUENCE_INPUT/${filename}"
 
     val f = Paths.get(fileLocation)
 
@@ -53,11 +54,10 @@ object DREAM5Loader {
       if (Files.exists(f)) {
         // load from files
         // TODO: Alyssa read all files in folder
-          sc.textFile(fileLocation).map(r => r.split(","))
-            .map(r =>
-              LabeledSequence( RowMajorArrayVectorizedSequence(r(0).split(" ").map(_.toDouble), SequenceMetadata(r(1).toInt,r(3).toInt))
-              , r(3).toDouble)
-              )
+        val data = sc.objectFile[SaveableArray](fileLocation)
+        println(data.count)
+        println(data.first)
+        data.map(r => LabeledSequence(RowMajorArrayVectorizedSequence(r.sequence, r.metadata), r.label))
 
       } else {
         // compute files
@@ -69,23 +69,24 @@ object DREAM5Loader {
           } else {
             assert(false, "Unknown dataset")
           }
-        val tfReader = new DREAM5TFReader(sc, path, s"${fName}")
+        val tfReader = new DREAM5TFReader(sc, path, s"${fName}", sample)
         val rdd = tfReader.getRDD
-        println(rdd.count)
         rdd.persist
         println(s"Saving input sequences to ${fileLocation}")
         val l = tfReader.getLength
         val chan = tfReader.getChannels
-//        rdd.map(r => (r._1.mkString(" "), l, chan, r._2))
-//            .saveAsTextFile(fileLocation)
-
-        rdd.map(r => LabeledSequence(RowMajorArrayVectorizedSequence(r._1, SequenceMetadata(l, chan)), r._2))
+        val labeled = rdd.map(r => LabeledSequence(RowMajorArrayVectorizedSequence(r._1, SequenceMetadata(l, chan)), r._2))
+        val saveable = labeled.map(r => SaveableArray(r.sequence.toArray, r.sequence.metadata, r.label))
+        saveable.saveAsObjectFile(fileLocation)
+        labeled
       }
     println(s"loaded ${dataset}")
     rdd
   }
 }
 
+case class SaveableArray(sequence: Array[Double], metadata: SequenceMetadata, label: Double) extends Serializable
+case class SaveableVector(sequence: DenseVector[Double], label: Double) extends Serializable
 
 
 

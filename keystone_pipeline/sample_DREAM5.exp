@@ -18,4 +18,4 @@ loss: softmax
 reg: 0.001
 saveFeatures: true
 yarn: True
-cluster: true
+cluster: false

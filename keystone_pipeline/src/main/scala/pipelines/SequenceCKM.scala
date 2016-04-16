@@ -62,155 +62,168 @@ object SequenceCKM extends Serializable {
 
 
   def run(sc: SparkContext, conf: CKMConf) {
+
+    val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
     val data: SequenceDataset = loadData(sc, conf.dataset)
+    // load in features if they were already saved
+    val featureLocation = s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/ckn_${feature_id}_train_features"
 
-    // Compute bandwidth
-    val median = SequenceCKM.samplePairwiseMedian(data.train.map(_.sequence), conf.patch_sizes(0))
-    val bandwidth = 1/(2 * Math.pow(median, 2))
+    // Instantiate variables dependent on feature loading
+    var XTrain: RDD[DenseVector[Double]] = null
+    var XTest: RDD[DenseVector[Double]] = null
+    var trainIds: RDD[Long] = data.train.zipWithUniqueId.map(x => x._2)
+    var testIds: RDD[Long] = data.test.zipWithUniqueId.map(x => x._2)
+    val blockSize = conf.blockSize
 
-    val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" +
-      bandwidth + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
+    if (!Files.exists(Paths.get(featureLocation))) {
+
+      // Compute bandwidth
+      val median = SequenceCKM.samplePairwiseMedian(data.train.map(_.sequence), conf.patch_sizes(0))
+      val bandwidth = 1 / (2 * Math.pow(median, 2))
+
+      var convKernel: Pipeline[Sequence, Sequence] = new Identity()
+      implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
+      val gaussian = new Gaussian(0, 1)
+      val uniform = new Uniform(0, 1)
+      var numOutputFeatures = 0
 
 
-    var convKernel: Pipeline[Sequence, Sequence] = new Identity()
-    implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
-    val gaussian = new Gaussian(0, 1)
-    val uniform = new Uniform(0, 1)
-    var numOutputFeatures = 0
-    var trainIds = data.train.zipWithUniqueId.map(x => x._2.toInt)
-    var testIds = data.test.zipWithUniqueId.map(x => x._2.toInt)
+      val (xDim, numChannels) = getInfo(data)
+      println(s"Info ${xDim}, ${numChannels}")
+      var numInputFeatures = numChannels
+      var currX = xDim
 
-    val (xDim, numChannels) = getInfo(data)
-    println(s"Info ${xDim}, ${numChannels}")
-    var numInputFeatures = numChannels
-    var currX = xDim
+      val startLayer =
+        if (conf.whiten) {
+          // Whiten top level
+          val patchExtractor = new SequenceWindower(1, conf.patch_sizes(0))
+            .andThen(SequenceVectorizer.apply)
+            .andThen(new Sampler(100000))
+          val baseFilters = patchExtractor(data.train.map(_.sequence))
+          val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
+          val whitener = new ZCAWhitenerEstimator(conf.whitenerValue).fitSingle(baseFilterMat)
+          val whitenedBase = whitener(baseFilterMat)
 
-    val startLayer =
-      if (conf.whiten) {
-        // Whiten top level
-        val patchExtractor = new SequenceWindower(1, conf.patch_sizes(0))
-          .andThen(SequenceVectorizer.apply)
-          .andThen(new Sampler(100000))
-        val baseFilters = patchExtractor(data.train.map(_.sequence))
-        val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
-        val whitener = new ZCAWhitenerEstimator(conf.whitenerValue).fitSingle(baseFilterMat)
-        val whitenedBase = whitener(baseFilterMat)
+          val rows = whitener.whitener.rows
+          val cols = whitener.whitener.cols
+          println(s"Whitener Rows :${rows}, Cols: ${cols}")
 
-        val rows = whitener.whitener.rows
-        val cols = whitener.whitener.cols
-        println(s"Whitener Rows :${rows}, Cols: ${cols}")
+          numOutputFeatures = conf.filters(0)
+          val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
+          val seed = conf.seed
+          val dimensions = conf.dimensions
+          val ccap: SequenceCC = new SequenceCC(numInputFeatures * patchSize,
+            numOutputFeatures,
+            seed,
+            bandwidth,
+            currX,
+            numInputFeatures,
+            Some(whitener),
+            conf.whitenerOffset,
+            conf.pool(0),
+            conf.insanity,
+            conf.fastfood)
+          if (conf.pool(0) > 1) {
+            var pooler = new SequencePooler(conf.poolStride(0), conf.pool(0), identity, (x: DenseVector[Double]) => mean(x))
+            convKernel = convKernel andThen ccap andThen pooler
+          } else {
+            convKernel = convKernel andThen ccap
+          }
+          currX = math.ceil(((currX - conf.patch_sizes(0) + 1) - conf.pool(0) / 2.0) / conf.poolStride(0)).toInt
 
-        numOutputFeatures = conf.filters(0)
-        val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
-        val seed = conf.seed
-        val dimensions = conf.dimensions
-        val ccap: SequenceCC = new SequenceCC(numInputFeatures*patchSize,
-                                              numOutputFeatures,
-                                              seed,
-                                              bandwidth,
-                                              currX,
-                                              numInputFeatures,
-                                              Some(whitener),
-                                              conf.whitenerOffset,
-                                              conf.pool(0),
-                                              conf.insanity,
-                                              conf.fastfood)
-        if (conf.pool(0) > 1) {
-          var pooler =  new SequencePooler(conf.poolStride(0), conf.pool(0), identity, (x:DenseVector[Double]) => mean(x))
+          println(s"Layer 0 output, Width: ${currX}")
+          numInputFeatures = numOutputFeatures
+          1
+        } else {
+          0
+        }
+
+      for (i <- startLayer until conf.layers) {
+        numOutputFeatures = conf.filters(i)
+        // val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
+        val patchSize = conf.patch_sizes(i).toInt
+        val seed = conf.seed + i
+        val ccap = new SequenceCC(numInputFeatures * patchSize,
+          numOutputFeatures,
+          seed, bandwidth, currX, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity, conf.fastfood)
+
+        if (conf.pool(i) > 1) {
+          var pooler = new SequencePooler(conf.poolStride(i), conf.pool(i), identity, (x: DenseVector[Double]) => mean(x))
           convKernel = convKernel andThen ccap andThen pooler
         } else {
           convKernel = convKernel andThen ccap
         }
-        currX = math.ceil(((currX  - conf.patch_sizes(0) + 1) - conf.pool(0)/2.0)/conf.poolStride(0)).toInt
 
-        println(s"Layer 0 output, Width: ${currX}")
+        currX = math.ceil(((currX - conf.patch_sizes(i) + 1) - conf.pool(i) / 2.0) / conf.poolStride(i)).toInt
+        println(s"Layer ${i} output, Width: ${currX}")
         numInputFeatures = numOutputFeatures
-        1
-      } else {
-        0
+      }
+      val outFeatures = currX * numOutputFeatures
+
+      val meta = data.train.take(1)(0).sequence.metadata
+      val featurizer1 = SequenceExtractor andThen convKernel
+      val featurizer2 = SequenceVectorizer andThen new Cacher[DenseVector[Double]]
+
+      println("OUT FEATURES " + outFeatures)
+      var featurizer = featurizer1 andThen featurizer2
+      if (conf.cosineSolver) {
+        val randomFeatures = SeededCosineRandomFeatures(outFeatures, conf.cosineFeatures, conf.cosineGamma, 24) andThen new Cacher[DenseVector[Double]]
+        featurizer = featurizer andThen randomFeatures
       }
 
-    for (i <- startLayer until conf.layers) {
-      numOutputFeatures = conf.filters(i)
-     // val patchSize = math.pow(conf.patch_sizes(i), 2).toInt
-      val patchSize = conf.patch_sizes(i).toInt
-      val seed = conf.seed + i
-      val ccap = new SequenceCC(numInputFeatures*patchSize,
-                                numOutputFeatures,
-                 seed, bandwidth, currX, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity, conf.fastfood)
+      val dataLoadBegin = System.nanoTime
+      data.train.count()
+      data.test.count()
+      val dataLoadTime = timeElapsed(dataLoadBegin)
+      println(s"Loading data took ${dataLoadTime} secs")
 
-      if (conf.pool(i) > 1) {
-        var pooler =  new SequencePooler(conf.poolStride(i), conf.pool(i), identity, (x:DenseVector[Double]) => mean(x))
-        convKernel = convKernel andThen ccap andThen pooler
-      } else {
-        convKernel = convKernel andThen ccap
+
+      val convTrainBegin = System.nanoTime
+      XTrain = featurizer(data.train)
+      val count = XTrain.count()
+      val convTrainTime = timeElapsed(convTrainBegin)
+      println(s"Generating train features took ${convTrainTime} secs")
+
+      val convTestBegin = System.nanoTime
+      XTest = featurizer(data.test)
+      XTest.count()
+      val convTestTime = timeElapsed(convTestBegin)
+      println(s"Generating test features took ${convTestTime} secs")
+
+      val numFeatures = XTrain.take(1)(0).size
+      println(s"numFeatures: ${numFeatures}, count: ${count}, blockSize: ${blockSize}")
+
+
+      if (conf.saveFeatures) {
+        if (!Files.exists(Paths.get(featureLocation))) {
+          println(s"Saving Features, ${feature_id}")
+          val saveTrain: RDD[SaveableVector] = XTrain.zip(LabelExtractor(data.train)).map(r => SaveableVector(r._1, r._2))
+          val saveTest: RDD[SaveableVector] = XTest.zip(LabelExtractor(data.test)).map(r => SaveableVector(r._1, r._2))
+          saveTrain.saveAsObjectFile(s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/ckn_${feature_id}_train_features")
+          saveTest.saveAsObjectFile(s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/ckn_${feature_id}_test_features")
+        } else {
+          println("feature files already saved")
+        }
+
       }
 
-      currX = math.ceil(((currX  - conf.patch_sizes(i) + 1) - conf.pool(i)/2.0)/conf.poolStride(i)).toInt
-      println(s"Layer ${i} output, Width: ${currX}")
-      numInputFeatures = numOutputFeatures
+      val avgEigenValue = (XTrain.map((x: DenseVector[Double]) => mean(x :* x)).sum() / (1.0 * count))
+      println(s"Average EigenValue : ${avgEigenValue}")
+    } else { // end loading features
+        XTrain = sc.objectFile[SaveableVector](featureLocation).map(_.sequence)
+        XTest =  sc.objectFile[SaveableVector](featureLocation).map(_.sequence)
     }
-    val outFeatures = currX * numOutputFeatures
-
-    val meta = data.train.take(1)(0).sequence.metadata
-    val featurizer1 = SequenceExtractor  andThen convKernel
-    val featurizer2 = SequenceVectorizer andThen new Cacher[DenseVector[Double]]
-
-    println("OUT FEATURES " +  outFeatures)
-    var featurizer = featurizer1 andThen featurizer2
-    if (conf.cosineSolver) {
-      val randomFeatures = SeededCosineRandomFeatures(outFeatures, conf.cosineFeatures,  conf.cosineGamma, 24) andThen new Cacher[DenseVector[Double]]
-      featurizer = featurizer andThen randomFeatures
-    }
-
-    val dataLoadBegin = System.nanoTime
-    data.train.count()
-    data.test.count()
-    val dataLoadTime = timeElapsed(dataLoadBegin)
-    println(s"Loading data took ${dataLoadTime} secs")
-
-
-    val convTrainBegin = System.nanoTime
-    var XTrain = featurizer(data.train)
-    val count = XTrain.count()
-    val convTrainTime  = timeElapsed(convTrainBegin)
-    println(s"Generating train features took ${convTrainTime} secs")
-
-    val convTestBegin = System.nanoTime
-    var XTest = featurizer(data.test)
-    XTest.count()
-    val convTestTime  = timeElapsed(convTestBegin)
-    println(s"Generating test features took ${convTestTime} secs")
-
-    val numFeatures = XTrain.take(1)(0).size
-    val blockSize = conf.blockSize
-    println(s"numFeatures: ${numFeatures}, count: ${count}, blockSize: ${blockSize}")
-
-
-    if (conf.saveFeatures) {
-      val location = s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/ckn_${feature_id}_train_features"
-      if (!Files.exists(Paths.get(location))) {
-        println(s"Saving Features, ${feature_id}")
-        XTrain.map(_.toArray.mkString(",")).zip(LabelExtractor(data.train)).saveAsTextFile(s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/ckn_${feature_id}_train_features")
-        XTest.map(_.toArray.mkString(",")).zip(LabelExtractor(data.test)).saveAsTextFile(s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/ckn_${feature_id}_test_features")
-      } else {
-        println("feature files already saved")
-      }
-
-    }
-
-    val avgEigenValue = (XTrain.map((x:DenseVector[Double]) => mean(x :*  x)).sum()/(1.0*count))
-    println(s"Average EigenValue : ${avgEigenValue}")
 
 
     val yTrain: RDD[DenseVector[Double]] = data.train.map(r => DenseVector(r.label))
     val yTest: RDD[DenseVector[Double]] = data.test.map(r => DenseVector(r.label))
+    println(yTrain.count, yTest.count)
     yTrain.count()
     yTest.count()
     println(s"${yTrain} train points")
 
-//     TODO: Alyssa
     if (conf.solve) {
+      println(XTrain.count, yTrain.count)
       val model = new BlockLeastSquaresEstimator(blockSize, conf.numIters, conf.reg).fit(XTrain, yTrain)
       val trainPredictions: RDD[DenseVector[Double]] = model.apply(XTrain).cache()
       val testPredictions: RDD[DenseVector[Double]] =  model.apply(XTest).cache()
@@ -250,6 +263,8 @@ object SequenceCKM extends Serializable {
     }
   }
 
+
+
   def loadData(sc: SparkContext, dataset: String): SequenceDataset = {
 
     val trainfilename = dataset + "train"
@@ -264,7 +279,11 @@ object SequenceCKM extends Serializable {
         val train: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "train", trainfilename).cache
         val test: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "test", testfilename).cache
         (train, test)
-      } else {
+      } else if (dataset == "small_DREAM5") {
+        val train: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "train", trainfilename, sample = true).cache
+        val test: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "test", testfilename, sample = true).cache
+        (train, test)
+      }else {
         throw new IllegalArgumentException("Unknown Dataset")
       }
     println(s"training sample: ${train.first.sequence}, ${train.first.label}" )

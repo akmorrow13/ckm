@@ -31,8 +31,8 @@ class SequenceWindower(
       while (c < numChannels) {
         var s = startX
         while (s < endX) {
-            pool(c + (s-startX)*numChannels +
-              (endX-startX)*numChannels) = sequence.get(s, c)
+            val pos = c + (s-startX)*numChannels
+            pool(pos) = sequence.get(s, c)
           s = s + 1
         }
         c = c + 1
@@ -50,7 +50,7 @@ class SequenceWindower(
  * Divides sequences into fixed size pools, but when fed with sequences of various
  * sizes may produce a varying number of pools.
  *
- * NOTE: By default strides start from poolSize/2.
+ * NOTE: By default strides start from poolSize/2.nc
  *
  * @param stride x and y stride to get regions of the sequence
  * @param poolSize size of the patch to perform pooling on
@@ -71,8 +71,7 @@ class SequencePooler(
     val numChannels = sequence.metadata.numChannels
 
     val numPoolsX = math.ceil((xDim - strideStart).toDouble / stride).toInt
-    val numPoolsY = 1
-    val patch = new Array[Double]( numPoolsX * numPoolsY * numChannels)
+    val patch = new Array[Double]( numPoolsX * numChannels)
 
     // Start at strideStart in (x, y) and
     for (x <- strideStart until xDim by stride) {

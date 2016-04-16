@@ -13,7 +13,7 @@ import workflow.Transformer
  * ChannelMajorArrayVectorizedImage, as it is likely to be the most efficient
  * implementation.
  */
-trait Sequence {
+trait Sequence extends Serializable {
 
   val metadata: SequenceMetadata
 
@@ -92,7 +92,7 @@ trait Sequence {
  * @param dim is the length of the sequence
  * @param numChannels is the number of possible characters in the sequence
  */
-case class SequenceMetadata(dim: Int, numChannels: Int)
+case class SequenceMetadata(dim: Int, numChannels: Int) extends Serializable
 
 
 /**
@@ -170,7 +170,7 @@ class CoordinateValue(var x: Int, var channelIdx: Int, var v: Double)
  * @param sequence A Sequence.
  * @param label A label. Should be in [0 .. K] where K is some number of unique labels.
  */
-case class LabeledSequence(sequence: Sequence, label: Double, filename: Option[String] = None)
+case class LabeledSequence(sequence: Sequence, label: Double, filename: Option[String] = None) extends Serializable
 
 /**
  * Helper trait for implementing Sequences that wrap vectorized representations
