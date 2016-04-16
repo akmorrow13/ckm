@@ -19,6 +19,7 @@ import org.apache.spark.{SparkConf, SparkContext}
 import utils._
 import workflow.Pipeline
 import java.nio.file.{Files, Paths}
+import breeze.stats.{mean, median}
 
 // TODO: Alyssa , ChannelMajorArrayVectorizedSequence
 
@@ -27,13 +28,48 @@ import org.yaml.snakeyaml.constructor.Constructor
 
 import scala.reflect.{BeanProperty, ClassTag}
 
-object SequenceCKM extends Serializable with Logging {
+object SequenceCKM extends Serializable {
   val appName = "SequenceCKM"
+
+  def pairwiseMedian(data: DenseMatrix[Double]): Double = {
+    val x = data(0 until data.rows/2, *)
+    val y = data(data.rows/2 to -1, *)
+    val x_norm = norm(x :+ 1e-13, Axis._1)
+    val y_norm = norm(y :+ 1e-13, Axis._1)
+    val x_normalized = x / x_norm
+    val y_normalized = y / y_norm
+    val diff = (x_normalized - y_normalized)
+    val diff_norm = norm(diff, Axis._1)
+    val diff_norm_median = median(diff_norm)
+    diff_norm_median
+  }
+
+  def samplePairwiseMedian(data: RDD[Sequence], patchSize: Int = 0): Double = {
+    val baseFilters =
+      if (patchSize == 0) {
+        new Sampler(1000)(SequenceVectorizer(data))
+      } else {
+        val patchExtractor = new SequenceWindower(1, patchSize)
+          .andThen(SequenceVectorizer.apply)
+          .andThen(new Sampler(1000))
+        patchExtractor(data)
+      }
+
+    val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
+
+    pairwiseMedian(baseFilterMat)
+  }
+
 
   def run(sc: SparkContext, conf: CKMConf) {
     val data: SequenceDataset = loadData(sc, conf.dataset)
+
+    // Compute bandwidth
+    val median = SequenceCKM.samplePairwiseMedian(data.train.map(_.sequence), conf.patch_sizes(0))
+    val bandwidth = 1/(2 * Math.pow(median, 2))
+
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" +
-      conf.bandwidth.mkString("-") + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
+      bandwidth + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
 
 
     var convKernel: Pipeline[Sequence, Sequence] = new Identity()
@@ -71,7 +107,7 @@ object SequenceCKM extends Serializable with Logging {
         val ccap: SequenceCC = new SequenceCC(numInputFeatures*patchSize,
                                               numOutputFeatures,
                                               seed,
-                                              conf.bandwidth(0),
+                                              bandwidth,
                                               currX,
                                               numInputFeatures,
                                               Some(whitener),
@@ -101,7 +137,7 @@ object SequenceCKM extends Serializable with Logging {
       val seed = conf.seed + i
       val ccap = new SequenceCC(numInputFeatures*patchSize,
                                 numOutputFeatures,
-                 seed, conf.bandwidth(i), currX, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity, conf.fastfood)
+                 seed, bandwidth, currX, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity, conf.fastfood)
 
       if (conf.pool(i) > 1) {
         var pooler =  new SequencePooler(conf.poolStride(i), conf.pool(i), identity, (x:DenseVector[Double]) => mean(x))
@@ -167,49 +203,51 @@ object SequenceCKM extends Serializable with Logging {
     println(s"Average EigenValue : ${avgEigenValue}")
 
 
-//    val yTrain = data.train.map(_.label)
-//    val yTest = data.test.map(_.label)
-//    yTrain.count()
-//    yTest.count()
-//    println(s"${yTrain} train points")
+    val yTrain: RDD[DenseVector[Double]] = data.train.map(r => DenseVector(r.label))
+    val yTest: RDD[DenseVector[Double]] = data.test.map(r => DenseVector(r.label))
+    yTrain.count()
+    yTest.count()
+    println(s"${yTrain} train points")
 
-    // TODO: Alyssa
-//    if (conf.solve) {
-//      val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight)
-//        .fit()
-//     // val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(Xtrain, tTrain)
-//      val trainPredictions = model.apply(XTrain).cache()
-//      val testPredictions =  model.apply(XTest).cache()
-//
-//      val yTrainPred = MaxClassifier.apply(trainPredictions)
-//      val yTestPred =  MaxClassifier.apply(testPredictions)
-//
-//      val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train), conf.numClasses)
-//      val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test), conf.numClasses)
-//
-//      println(s"total training accuracy ${1 - trainEval.totalError}")
-//      println(s"total testing accuracy ${1 - testEval.totalError}")
-//
-//      val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
-//      val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
-//
-//      trainPredictions.zip(LabelExtractor(data.train).zip(trainIds)).map {
-//        case (weights, (label, id)) => s"$id,$label," + weights.toArray.mkString(",")
-//      }.collect().foreach{x =>
-//        out_train.write(x)
-//        out_train.write("\n")
-//      }
-//      out_train.close()
-//
-//      testPredictions.zip(LabelExtractor(data.test).zip(testIds)).map {
-//        case (weights, (label, id)) => s"$id,$label," + weights.toArray.mkString(",")
-//      }.collect().foreach{x =>
-//        out_test.write(x)
-//        out_test.write("\n")
-//      }
-//      out_test.close()
-//
-//    }
+//     TODO: Alyssa
+    if (conf.solve) {
+      val model = new BlockLeastSquaresEstimator(blockSize, conf.numIters, conf.reg).fit(XTrain, yTrain)
+      val trainPredictions: RDD[DenseVector[Double]] = model.apply(XTrain).cache()
+      val testPredictions: RDD[DenseVector[Double]] =  model.apply(XTest).cache()
+
+      assert(trainPredictions.first.length == 1)
+
+      // assert data sizes are the same
+      assert(trainPredictions.count == data.train.count)
+      assert(testPredictions.count  == data.test.count)
+
+      val testEval = trainPredictions.zip(data.train).map(r => Math.pow((r._1(0) - r._2.label),2))
+      val trainEval = testPredictions.zip(data.test).map(r =>  Math.pow((r._1(0) - r._2.label),2))
+
+
+      println(s"total training accuracy SSE ${trainEval}")
+      println(s"total testing accuracy ${testEval}")
+
+      val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
+      val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
+
+      trainPredictions.zip(LabelExtractor(data.train).zip(trainIds)).map {
+        case (weights, (label, id)) => s"$id,$label," + weights.toArray.mkString(",")
+      }.collect().foreach{x =>
+        out_train.write(x)
+        out_train.write("\n")
+      }
+      out_train.close()
+
+      testPredictions.zip(LabelExtractor(data.test).zip(testIds)).map {
+        case (weights, (label, id)) => s"$id,$label," + weights.toArray.mkString(",")
+      }.collect().foreach{x =>
+        out_test.write(x)
+        out_test.write("\n")
+      }
+      out_test.close()
+
+    }
   }
 
   def loadData(sc: SparkContext, dataset: String): SequenceDataset = {
@@ -281,6 +319,7 @@ object SequenceCKM extends Serializable with Logging {
     @BeanProperty var  augmentPatchSize: Int = 24
     @BeanProperty var  augmentType: String = "random"
     @BeanProperty var  fastfood: Boolean = false
+    @BeanProperty var  cluster: Boolean = false
   }
 
   case class SequenceDataset(

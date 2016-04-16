@@ -19,20 +19,20 @@ class DREAM5TFReader(sc: SparkContext,location: String, fileName: String) {
   def getLength = length
   def getChannels = nchan
 
-  val lines = sc.textFile(s"${location}/${fileName}")
+  val loc = s"${location}/${fileName}"
+  val p = Paths.get(loc)
+  assert(Files.exists(p))
 
-//  var lines = Source.fromFile(s"${location}/${fileName}").getLines
+  val lines = sc.textFile(loc)
 
   var X = lines.map(_.split("\t"))
-
-  // remove labels: should be gone
 
   var sequences =    new ListBuffer[Array[Double]]()
   var labels =    new ListBuffer[Double]()
 
   val tf = X.map(r => (ChannelConverter(r(2)).toArray, r(3).toDouble))
 
-  def get(): RDD[(Array[Double], Double)] = tf
+  def getRDD(): RDD[(Array[Double], Double)] = tf
 
 }
 
@@ -41,7 +41,11 @@ object DREAM5Loader {
 
   def apply(sc: SparkContext, path: String, partitions: Int, dataset: String, filename: String): RDD[LabeledSequence] = {
 
-    val fileLocation = s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/SEQUENCE_INPUT/${filename}"
+    val fileLocation =
+      if(clusterMode)
+
+      else
+        s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/SEQUENCE_INPUT/${filename}"
 
     val f = Paths.get(fileLocation)
 
@@ -66,7 +70,7 @@ object DREAM5Loader {
             assert(false, "Unknown dataset")
           }
         val tfReader = new DREAM5TFReader(sc, path, s"${fName}")
-        val rdd = tfReader.get
+        val rdd = tfReader.getRDD
         println(rdd.count)
         rdd.persist
         println(s"Saving input sequences to ${fileLocation}")
