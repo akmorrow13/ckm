@@ -10,7 +10,7 @@ dimensions: 1
 layers: 1
 patch_sizes: [5, 1]
 bandwidth: [1.8, 2.6] # gaussian parameters: compute median of L2 distance between all patches in dataset
-filters: [50] # filter for layer 1, 2, incrementally increase filter size
+filters: [400] # filter for layer 1, 2, incrementally increase filter size
 
 # Solver Params
 solve: true

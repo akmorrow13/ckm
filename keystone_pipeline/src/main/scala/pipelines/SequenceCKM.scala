@@ -72,16 +72,20 @@ object SequenceCKM extends Serializable {
       } else {
         "/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/"
       }
-    val featureLocation = featureLocationPrefix + s"ckn_${feature_id}_train_features"
+    val featureLocation_train = featureLocationPrefix + s"ckn_${feature_id}_train_features"
+    val featureLocation_test = featureLocationPrefix + s"ckn_${feature_id}_test_features"
 
     // Instantiate variables dependent on feature loading
     var XTrain: RDD[DenseVector[Double]] = null
     var XTest: RDD[DenseVector[Double]] = null
+    var yTrain: RDD[DenseVector[Double]] = null
+    var yTest: RDD[DenseVector[Double]] = null
+
     var trainIds: RDD[Long] = data.train.zipWithUniqueId.map(x => x._2)
     var testIds: RDD[Long] = data.test.zipWithUniqueId.map(x => x._2)
     val blockSize = conf.blockSize
 
-    if (!Files.exists(Paths.get(featureLocation))) {
+    if (!Files.exists(Paths.get(featureLocation_train))) {
 
       // Compute bandwidth
       val median = SequenceCKM.samplePairwiseMedian(data.train.map(_.sequence), conf.patch_sizes(0))
@@ -201,7 +205,7 @@ object SequenceCKM extends Serializable {
 
 
       if (conf.saveFeatures) {
-        if (!Files.exists(Paths.get(featureLocation))) {
+        if (!Files.exists(Paths.get(featureLocation_train))) {
           println(s"Saving Features, ${feature_id}")
           val saveTrain: RDD[SaveableVector] = XTrain.zip(LabelExtractor(data.train)).map(r => SaveableVector(r._1, r._2))
           val saveTest: RDD[SaveableVector] = XTest.zip(LabelExtractor(data.test)).map(r => SaveableVector(r._1, r._2))
@@ -212,17 +216,20 @@ object SequenceCKM extends Serializable {
         }
 
       }
+      yTrain = data.train.map(r => DenseVector(r.label))
+      yTest = data.test.map(r => DenseVector(r.label))
 
       val avgEigenValue = (XTrain.map((x: DenseVector[Double]) => mean(x :* x)).sum() / (1.0 * count))
       println(s"Average EigenValue : ${avgEigenValue}")
     } else { // end loading features
-        XTrain = sc.objectFile[SaveableVector](featureLocation).map(_.sequence)
-        XTest =  sc.objectFile[SaveableVector](featureLocation).map(_.sequence)
+        XTrain = sc.objectFile[SaveableVector](featureLocation_train).map(_.sequence)
+        XTest =  sc.objectFile[SaveableVector](featureLocation_test).map(_.sequence)
+        yTrain = sc.objectFile[SaveableVector](featureLocation_train).map(r => DenseVector(r.label))
+        yTest = sc.objectFile[SaveableVector](featureLocation_test).map(r => DenseVector(r.label))
     }
 
 
-    val yTrain: RDD[DenseVector[Double]] = data.train.map(r => DenseVector(r.label))
-    val yTest: RDD[DenseVector[Double]] = data.test.map(r => DenseVector(r.label))
+
     println(yTrain.count, yTest.count)
     yTrain.count()
     yTest.count()
@@ -230,9 +237,8 @@ object SequenceCKM extends Serializable {
 
     if (conf.solve) {
       println(XTrain.count, yTrain.count)
-      println(XTrain.first)
-      println(yTrain.first)
-      val k = new BlockLeastSquaresEstimator(blockSize, conf.numIters).fit(XTrain, yTrain)
+      val x = XTrain.first
+      val y = yTrain.first
 
       val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
       val trainPredictions: RDD[DenseVector[Double]] = model.apply(XTrain).cache()
@@ -241,18 +247,22 @@ object SequenceCKM extends Serializable {
       assert(trainPredictions.first.length == 1)
 
       // assert data sizes are the same
+      println(trainPredictions.count,data.train.count)
+      println(testPredictions.count,data.test.count)
       assert(trainPredictions.count == data.train.count)
       assert(testPredictions.count  == data.test.count)
 
-      val testEval = trainPredictions.zip(data.train).map(r => Math.pow((r._1(0) - r._2.label),2))
-      val trainEval = testPredictions.zip(data.test).map(r =>  Math.pow((r._1(0) - r._2.label),2))
+      val trainEval = trainPredictions.zip(yTrain).map(r => Math.pow((r._1(0) - r._2(0)),2))
+      val testEval = testPredictions.zip(yTest).map(r =>  Math.pow((r._1(0) - r._2(0)),2))
 
+      val testSSE = testEval.sum
+      val trainSSE = trainEval.sum
 
-      println(s"total training accuracy SSE ${trainEval}")
-      println(s"total testing accuracy ${testEval}")
+      println(s"total training accuracy SSE ${trainSSE}")
+      println(s"total testing accuracy ${testSSE}")
 
-      val out_train = new BufferedWriter(new FileWriter("/tmp/ckm_train_results"))
-      val out_test = new BufferedWriter(new FileWriter("/tmp/ckm_test_results"))
+      val out_train = new BufferedWriter(new FileWriter(s"ckm_train_results_Filters:_${conf.filters(0)}"))
+      val out_test = new BufferedWriter(new FileWriter(s"ckm_test_results_Filters:_${conf.filters(0)}"))
 
       trainPredictions.zip(LabelExtractor(data.train).zip(trainIds)).map {
         case (weights, (label, id)) => s"$id,$label," + weights.toArray.mkString(",")
