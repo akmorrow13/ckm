@@ -66,7 +66,13 @@ object SequenceCKM extends Serializable {
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
     val data: SequenceDataset = loadData(sc, conf.dataset)
     // load in features if they were already saved
-    val featureLocation = s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/ckn_${feature_id}_train_features"
+    val featureLocationPrefix =
+      if (conf.cluster) {
+        "/home/eecs/akmorrow/compbio294/ckm/keystone_pipeline/compbio/FEATURE_OUTPUT"
+      } else {
+        "/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/"
+      }
+    val featureLocation = featureLocationPrefix + s"ckn_${feature_id}_train_features"
 
     // Instantiate variables dependent on feature loading
     var XTrain: RDD[DenseVector[Double]] = null
@@ -199,8 +205,8 @@ object SequenceCKM extends Serializable {
           println(s"Saving Features, ${feature_id}")
           val saveTrain: RDD[SaveableVector] = XTrain.zip(LabelExtractor(data.train)).map(r => SaveableVector(r._1, r._2))
           val saveTest: RDD[SaveableVector] = XTest.zip(LabelExtractor(data.test)).map(r => SaveableVector(r._1, r._2))
-          saveTrain.saveAsObjectFile(s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/ckn_${feature_id}_train_features")
-          saveTest.saveAsObjectFile(s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/ckn_${feature_id}_test_features")
+          saveTrain.saveAsObjectFile(featureLocationPrefix + s"ckn_${feature_id}_train_features")
+          saveTest.saveAsObjectFile(featureLocationPrefix + s"ckn_${feature_id}_test_features")
         } else {
           println("feature files already saved")
         }
@@ -224,7 +230,11 @@ object SequenceCKM extends Serializable {
 
     if (conf.solve) {
       println(XTrain.count, yTrain.count)
-      val model = new BlockLeastSquaresEstimator(blockSize, conf.numIters, conf.reg).fit(XTrain, yTrain)
+      println(XTrain.first)
+      println(yTrain.first)
+      val k = new BlockLeastSquaresEstimator(blockSize, conf.numIters).fit(XTrain, yTrain)
+
+      val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
       val trainPredictions: RDD[DenseVector[Double]] = model.apply(XTrain).cache()
       val testPredictions: RDD[DenseVector[Double]] =  model.apply(XTest).cache()
 
