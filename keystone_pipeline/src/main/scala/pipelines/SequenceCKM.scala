@@ -64,11 +64,11 @@ object SequenceCKM extends Serializable {
   def run(sc: SparkContext, conf: CKMConf) {
 
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
-    val data: SequenceDataset = loadData(sc, conf.dataset)
+    val data: SequenceDataset = loadData(sc, conf.dataset, conf.cluster)
     // load in features if they were already saved
     val featureLocationPrefix =
       if (conf.cluster) {
-        "/home/eecs/akmorrow/compbio294/ckm/keystone_pipeline/compbio/FEATURE_OUTPUT"
+        "/home/eecs/akmorrow/compbio294/ckm/keystone_pipeline/compbio/FEATURE_OUTPUT/"
       } else {
         "/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/"
       }
@@ -285,14 +285,15 @@ object SequenceCKM extends Serializable {
 
 
 
-  def loadData(sc: SparkContext, dataset: String): SequenceDataset = {
+  def loadData(sc: SparkContext, dataset: String, cluster: Boolean): SequenceDataset = {
 
     val trainfilename = dataset + "train"
     val testfilename = dataset + "test"
     val filePath =
-    if (sc.isLocal)
+    if (cluster)
+      "/home/eecs/akmorrow/compbio294/ckm/keystone_pipeline/compbio/SEQUENCE_INPUT"
+    else
       "/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data"
-    else "compbio"
 
     val (train, test) =
       if (dataset == "sample_DREAM5") {

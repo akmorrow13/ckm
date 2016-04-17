@@ -11,7 +11,7 @@ import utils._
 import scala.collection.mutable.ListBuffer
 
 
-class DREAM5TFReader(sc: SparkContext,location: String, fileName: String, sample: Boolean = true) {
+class DREAM5TFReader(sc: SparkContext, location: String, fileName: String, sample: Boolean = true) {
   // We hardcode this because these are properties of the MNIST dataset.
   val length = 40
   val nchan = 4 // A, T, G, C
