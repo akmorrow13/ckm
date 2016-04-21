@@ -1,9 +1,8 @@
 package loaders
 
 
-import java.nio.file.{Files, Paths}
-
 import breeze.linalg.DenseVector
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import utils._
@@ -11,7 +10,7 @@ import utils._
 import scala.collection.mutable.ListBuffer
 
 
-class DREAM5TFReader(sc: SparkContext, location: String, fileName: String, sample: Boolean = true) {
+class DREAM5TFReader(sc: SparkContext, fileName: String, fs: FileSystem, sample: Boolean = true) {
   // We hardcode this because these are properties of the MNIST dataset.
   val length = 40
   val nchan = 4 // A, T, G, C
@@ -20,11 +19,9 @@ class DREAM5TFReader(sc: SparkContext, location: String, fileName: String, sampl
   def getLength = length
   def getChannels = nchan
 
-  val loc = s"${location}/${fileName}"
-  val p = Paths.get(loc)
-  assert(Files.exists(p))
+  assert(fs.exists(new Path(fileName)))
 
-  val lines = sc.textFile(loc)
+  val lines = sc.textFile(fileName)
 
 
 
@@ -45,14 +42,13 @@ class DREAM5TFReader(sc: SparkContext, location: String, fileName: String, sampl
 
 object DREAM5Loader {
 
-  def apply(sc: SparkContext, path: String, partitions: Int, dataset: String, filename: String, sample: Boolean = false): RDD[LabeledSequence] = {
+  def apply(sc: SparkContext, fs: FileSystem, partitions: Int, dataset: String, filename: String, sample: Boolean = false): RDD[LabeledSequence] = {
 
-    val fileLocation = s"${path}/SEQUENCE_INPUT/${filename}"
-    println(fileLocation)
-    val f = Paths.get(fileLocation)
+    val fileLocation = s"SEQUENCE_INPUT/${filename}"
+
 
     val rdd: RDD[LabeledSequence] =
-      if (Files.exists(f)) {
+      if (fs.exists(new Path(fileLocation))) {
         // load from files
         // TODO: Alyssa read all files in folder
         val data = sc.objectFile[SaveableArray](fileLocation)
@@ -68,7 +64,7 @@ object DREAM5Loader {
           } else {
             assert(false, "Unknown dataset")
           }
-        val tfReader = new DREAM5TFReader(sc, path, s"${fName}", sample)
+        val tfReader = new DREAM5TFReader(sc, s"${fName}",fs, sample)
         val rdd = tfReader.getRDD
         rdd.persist
         println(s"Saving input sequences to ${fileLocation}")

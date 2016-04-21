@@ -66,22 +66,16 @@ object SequenceCKM extends Serializable {
   }
 
 
-  def run(sc: SparkContext, conf: CKMConf, homeDir: String) {
+  def run(sc: SparkContext, conf: CKMConf, fs: FileSystem) {
 
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
-    val data: SequenceDataset = loadData(sc, conf.dataset, homeDir)
+    val data: SequenceDataset = loadData(sc, conf.dataset, fs)
     // load in features if they were already saved
-    val featureLocationPrefix =
-      if (conf.cluster) {
-       homeDir + "/FEATURE_OUTPUT/"
-      } else {
-        if (conf.getDataset == "sample_CHIPSEQ")
-          "/Users/akmorrow/Documents/COMPBIO294/Project/TFData/FEATURE_OUTPUT/"
-        else
-          "/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/FEATURE_OUTPUT/"
-      }
+    val featureLocationPrefix = "FEATURE_OUTPUT/"
+
     val featureLocation_train = featureLocationPrefix + s"ckn_${feature_id}_train_features"
     val featureLocation_test = featureLocationPrefix + s"ckn_${feature_id}_test_features"
+
 
     // Instantiate variables dependent on feature loading
     var XTrain: RDD[DenseVector[Double]] = null
@@ -93,7 +87,7 @@ object SequenceCKM extends Serializable {
     var testIds: RDD[Long] = data.test.zipWithUniqueId.map(x => x._2)
     val blockSize = conf.blockSize
 
-    if (!Files.exists(Paths.get(featureLocation_train))) {
+    if (!fs.exists(new Path(featureLocation_train))) {
 
       // Compute bandwidth
 //      val median = SequenceCKM.samplePairwiseMedian(data.train.map(_.sequence), conf.patch_sizes(0))
@@ -213,8 +207,8 @@ object SequenceCKM extends Serializable {
           println(s"Saving Features, ${feature_id}")
           val saveTrain: RDD[SaveableVector] = XTrain.zip(LabelExtractor(data.train)).map(r => SaveableVector(r._1, r._2))
           val saveTest: RDD[SaveableVector] = XTest.zip(LabelExtractor(data.test)).map(r => SaveableVector(r._1, r._2))
-          saveTrain.saveAsObjectFile(featureLocationPrefix + s"ckn_${feature_id}_train_features")
-          saveTest.saveAsObjectFile(featureLocationPrefix + s"ckn_${feature_id}_test_features")
+          saveTrain.saveAsObjectFile(featureLocation_train)
+          saveTest.saveAsObjectFile(featureLocation_test)
         } else {
           println("feature files already saved")
         }
@@ -231,6 +225,7 @@ object SequenceCKM extends Serializable {
         XTest =  sc.objectFile[SaveableVector](featureLocation_test).map(_.sequence)
         yTrain = sc.objectFile[SaveableVector](featureLocation_train).map(r => DenseVector(r.label))
         yTest = sc.objectFile[SaveableVector](featureLocation_test).map(r => DenseVector(r.label))
+      println(XTrain.count, XTest.count, yTrain.count, yTest.count)
     }
 
 
@@ -242,10 +237,8 @@ object SequenceCKM extends Serializable {
       val trainPredictions: RDD[DenseVector[Double]] = model.apply(XTrain).cache()
       val testPredictions: RDD[DenseVector[Double]] =  model.apply(XTest).cache()
 
-      val trainP = trainPredictions.first
-      val testP = testPredictions.first
-
-      assert(trainPredictions.first.length == 1)
+      val trainLabels = yTrain.map(r => r(0).toInt)
+      val testLabels = yTest.map(r => r(0).toInt)
 
       if (conf.numClasses == 1) {
         // compute train error
@@ -256,10 +249,8 @@ object SequenceCKM extends Serializable {
       } else {
         val yTrainPred = MaxClassifier.apply(trainPredictions)
         val yTestPred =  MaxClassifier.apply(testPredictions)
-
-        println(LabelExtractor(data.train).map(r => r.toInt).first)
-        val trainEval = MulticlassClassifierEvaluator(yTrainPred, LabelExtractor(data.train).map(r => r.toInt), conf.numClasses)
-        val testEval = MulticlassClassifierEvaluator(yTestPred, LabelExtractor(data.test).map(r => r.toInt), conf.numClasses)
+        val trainEval = MulticlassClassifierEvaluator(yTrainPred, trainLabels, conf.numClasses)
+        val testEval = MulticlassClassifierEvaluator(yTestPred, testLabels, conf.numClasses)
 
         // comput AUROC
         // TODO: what to put in here
@@ -267,27 +258,18 @@ object SequenceCKM extends Serializable {
         computeAUROC(testPredictions.map(r => r(0)), yTest.map(r => r(0)))
       }
 
-//
-//      val out_train = new BufferedWriter(new FileWriter(s"ckm_train_results_Filters:_${conf.filters(0)}"))
-//      val out_test = new BufferedWriter(new FileWriter(s"ckm_test_results_Filters:_${conf.filters(0)}"))
-//
-//
-//      trainPredictions.zip(LabelExtractor(data.train)).map {
-//        case (weights, label) => s"$label," + weights.toArray.mkString(",")
-//      }.collect().foreach{x =>
-//        out_train.write(x)
-//        out_train.write("\n")
-//      }
-//      out_train.close()
-//
-//      testPredictions.zip(LabelExtractor(data.test)).map {
-//        case (weights, label) => s"$label," + weights.toArray.mkString(",")
-//      }.collect().foreach{x =>
-//        out_test.write(x)
-//        out_test.write("\n")
-//      }
-//      out_test.close()
-//
+
+      val out_train = s"ckm_train_results_Filters_${conf.filters(0)}_${conf.dataset}"
+      val out_test = s"ckm_test_results_Filters_${conf.filters(0)}_${conf.dataset}"
+
+      trainPredictions.zip(trainLabels).map {
+        case (weights, label) => s"$label," + weights.toArray.mkString(",")
+      }.saveAsTextFile(out_train)
+
+      testPredictions.zip(testLabels).map {
+        case (weights, label) => s"$label," + weights.toArray.mkString(",")
+      }.saveAsTextFile(out_test)
+
     }
   }
 
@@ -331,23 +313,24 @@ object SequenceCKM extends Serializable {
 
 
 
-  def loadData(sc: SparkContext, dataset: String, filePath: String): SequenceDataset = {
+  def loadData(sc: SparkContext, dataset: String, fs: FileSystem): SequenceDataset = {
 
     val trainfilename = dataset + "train"
     val testfilename = dataset + "test"
 
     val (train, test) =
       if (dataset == "sample_DREAM5") {
-        val train: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "train", trainfilename).cache
-        val test: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "test", testfilename).cache
+        val train: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "train", trainfilename).cache
+        val test: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "test", testfilename).cache
         (train, test)
       } else if (dataset == "small_DREAM5") {
-        val train: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "train", trainfilename, sample = true).cache
-        val test: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "test", testfilename, sample = true).cache
+        val train: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "train", trainfilename, sample = true).cache
+        val test: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "test", testfilename, sample = true).cache
         (train, test)
       } else if (dataset == "sample_CHIPSEQ") {
-        val train: RDD[LabeledSequence] = ChipSeqLoader(sc, filePath, 10, "train", trainfilename, sample = true).cache
-        val test: RDD[LabeledSequence] = ChipSeqLoader(sc, filePath, 10, "test", testfilename, sample = true).cache
+        val train: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "train", trainfilename, sample = true).cache
+        val test: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "test", testfilename, sample = true).cache
+        println(train.first)
         (train, test)
       }else {
         throw new IllegalArgumentException("Unknown Dataset")
@@ -428,10 +411,10 @@ object SequenceCKM extends Serializable {
         else
           "/Users/akmorrow/Documents/COMPBIO294/Project/ckm/"
       val path: Path = new Path(url)
-      var fs: FileSystem = path.getFileSystem(new Configuration())
-      var homedir = fs.getHomeDirectory.toString
+      val fs: FileSystem = path.getFileSystem(new Configuration())
+      val homedir = fs.getHomeDirectory.toString
       println(homedir)
-      val configfile = fs.open(new Path("sample_CHIPSEQ.exp"))
+      val configfile= fs.open(new Path("sample_CHIPSEQ.exp"))
 
       val yaml = new Yaml(new Constructor(classOf[CKMConf]))
       val appConfig = yaml.load(configfile).asInstanceOf[CKMConf]
@@ -443,11 +426,7 @@ object SequenceCKM extends Serializable {
       conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
       sc.setCheckpointDir(appConfig.checkpointDir)
-      val path2: Path = new Path("sample_CHIPSEQ.exp")
-      fs = path2.getFileSystem(sc.hadoopConfiguration)
-      homedir = fs.getHomeDirectory.toString
-      println(homedir)
-      run(sc, appConfig, homedir)
+      run(sc, appConfig, fs)
       sc.stop()
     }
   }

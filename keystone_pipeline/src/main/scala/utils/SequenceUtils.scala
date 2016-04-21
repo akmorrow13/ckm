@@ -1,9 +1,16 @@
 package utils
 
+import java.io.InputStream
+
 import breeze.linalg.DenseVector
+import org.apache.avro.file.DataFileStream
+import org.apache.avro.specific.SpecificDatumReader
+import org.apache.hadoop.fs.{Path, _}
 import org.apache.spark.rdd.RDD
 import pipelines.FunctionNode
 import workflow.Transformer
+
+import scala.reflect.ClassTag
 
 
 /**
@@ -96,5 +103,20 @@ class SequencePooler(
     ChannelMajorArrayVectorizedSequence(patch, SequenceMetadata(numPoolsX, numChannels))
   }
 }
+
+object FileStreamConversion {
+  def apply[T: ClassTag](fileLocation: String, fs: FileSystem): List[T] = {
+    val f = fs.open(new Path(fileLocation)).asInstanceOf[InputStream]
+    val dr = new SpecificDatumReader[T]()
+    val iter = new DataFileStream[T](f, dr).iterator()
+    var list = List.empty[T]
+
+    while (iter.hasNext) {
+      list = iter.next :: list
+    }
+    list
+  }
+}
+
 
 

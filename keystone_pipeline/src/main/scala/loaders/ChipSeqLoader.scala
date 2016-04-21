@@ -1,7 +1,6 @@
 package loaders
 
-import java.nio.file.{Files, Paths}
-
+import org.apache.hadoop.fs._
 import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
 import utils._
@@ -9,7 +8,7 @@ import utils._
 import scala.collection.mutable.ListBuffer
 
 
-class ChipSeqReader(sc: SparkContext, location: String, fileName: String, sample: Boolean = true) {
+class ChipSeqReader(sc: SparkContext, fileName: String, fs: FileSystem, sample: Boolean = true) {
   // We hardcode this because these are properties of the MNIST dataset.
   val length = 1000
   val nchan = 4 // A, T, G, C
@@ -18,11 +17,9 @@ class ChipSeqReader(sc: SparkContext, location: String, fileName: String, sample
   def getLength = length
   def getChannels = nchan
 
-  val loc = s"${location}/${fileName}"
-  val p = Paths.get(loc)
-  assert(Files.exists(p))
+  assert(fs.exists(new Path(fileName)))
 
-  val lines = sc.textFile(loc).filter(r => !r.contains("signal"))
+  val lines = sc.textFile(fileName).filter(r => !r.contains("signal"))
 
 
   var X: RDD[Array[String]] = lines.map(_.split("\t"))
@@ -34,7 +31,6 @@ class ChipSeqReader(sc: SparkContext, location: String, fileName: String, sample
   var labels =    new ListBuffer[Double]()
   val lengthOpt: Option[Int] = Option(length)
   val test: Array[String] = X.first
-  X.foreach(println)
   val tf = X.map(r => (ChannelConverter(r(5)).toArray, r(4).toDouble))
 
   def getRDD(): RDD[(Array[Double], Double)] = tf
@@ -44,16 +40,16 @@ class ChipSeqReader(sc: SparkContext, location: String, fileName: String, sample
 
 object ChipSeqLoader {
 
-  def apply(sc: SparkContext, path: String, partitions: Int, dataset: String, filename: String, sample: Boolean = false): RDD[LabeledSequence] = {
+  def apply(sc: SparkContext, fs: FileSystem, partitions: Int, dataset: String, filename: String, sample: Boolean = false): RDD[LabeledSequence] = {
 
-    val fileLocation = s"${path}/SEQUENCE_INPUT/${filename}"
+    val fileLocation = s"SEQUENCE_INPUT/${filename}"
 
-    val f = Paths.get(fileLocation)
 
     val rdd: RDD[LabeledSequence] =
-      if (Files.exists(f)) {
+      if (fs.exists(new Path(fileLocation))) {
         // load from files
         // TODO: Alyssa read all files in folder
+
         val data = sc.objectFile[SaveableArray](fileLocation)
         data.map(r => LabeledSequence(RowMajorArrayVectorizedSequence(r.sequence, r.metadata), r.label))
 
@@ -68,7 +64,7 @@ object ChipSeqLoader {
             assert(false, "Unknown dataset")
           }
 
-        val tfReader = new ChipSeqReader(sc, path, s"${fName}", sample)
+        val tfReader = new ChipSeqReader(sc, s"${fName}", fs, sample)
         val rdd = tfReader.getRDD
         rdd.persist
         println(s"Saving input sequences to ${fileLocation}")
