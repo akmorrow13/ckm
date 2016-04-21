@@ -22,10 +22,10 @@ class ChipSeqReader(sc: SparkContext, location: String, fileName: String, sample
   val p = Paths.get(loc)
   assert(Files.exists(p))
 
-  val lines = sc.textFile(loc)
+  val lines = sc.textFile(loc).filter(r => !r.contains("signal"))
 
 
-  var X = lines.map(_.split("\t"))
+  var X: RDD[Array[String]] = lines.map(_.split("\t"))
   if (sample) {
     X = X.sample(false, 0.01)
     println("samples chosen: ", X.count)
@@ -33,6 +33,8 @@ class ChipSeqReader(sc: SparkContext, location: String, fileName: String, sample
   var sequences =    new ListBuffer[Array[Double]]()
   var labels =    new ListBuffer[Double]()
   val lengthOpt: Option[Int] = Option(length)
+  val test: Array[String] = X.first
+  X.foreach(println)
   val tf = X.map(r => (ChannelConverter(r(5)).toArray, r(4).toDouble))
 
   def getRDD(): RDD[(Array[Double], Double)] = tf
@@ -44,7 +46,7 @@ object ChipSeqLoader {
 
   def apply(sc: SparkContext, path: String, partitions: Int, dataset: String, filename: String, sample: Boolean = false): RDD[LabeledSequence] = {
 
-    val fileLocation = s"/Users/akmorrow/Documents/COMPBIO294/Project/TFData/SEQUENCE_INPUT/${filename}"
+    val fileLocation = s"${path}/SEQUENCE_INPUT/${filename}"
 
     val f = Paths.get(fileLocation)
 
@@ -65,6 +67,7 @@ object ChipSeqLoader {
           } else {
             assert(false, "Unknown dataset")
           }
+
         val tfReader = new ChipSeqReader(sc, path, s"${fName}", sample)
         val rdd = tfReader.getRDD
         rdd.persist
@@ -73,11 +76,11 @@ object ChipSeqLoader {
         val chan = tfReader.getChannels
         val labeled = rdd.map(r => LabeledSequence(RowMajorArrayVectorizedSequence(r._1, SequenceMetadata(l, chan)), r._2))
         val saveable = labeled.map(r => SaveableArray(r.sequence.toArray, r.sequence.metadata, r.label))
-        //saveable.saveAsObjectFile(fileLocation)
+        saveable.saveAsObjectFile(fileLocation)
         labeled
       }
     println(s"loaded ${dataset}")
-    sc.parallelize(rdd.take(10))
+    rdd
   }
 }
 

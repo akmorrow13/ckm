@@ -1,6 +1,6 @@
 package pipelines
 
-import java.io.{BufferedWriter, FileWriter}
+import java.io.{File, BufferedWriter, FileWriter}
 import java.util.Date
 
 import breeze.linalg._
@@ -13,6 +13,8 @@ import nodes.learning._
 import nodes.stats.{SeededCosineRandomFeatures, Sampler}
 import nodes.util._
 import org.apache.commons.math3.random.MersenneTwister
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
 import org.apache.spark.rdd.RDD
@@ -22,6 +24,7 @@ import workflow.Pipeline
 import java.nio.file.{Files, Paths}
 import breeze.stats.{mean, median}
 import org.apache.spark.mllib.stat.Statistics
+import org.apache.hadoop.conf.Configuration._
 
 // TODO: Alyssa , ChannelMajorArrayVectorizedSequence
 
@@ -187,40 +190,36 @@ object SequenceCKM extends Serializable {
       }
 
       val dataLoadBegin = System.nanoTime
-      data.train.count()
-      data.test.count()
       val dataLoadTime = timeElapsed(dataLoadBegin)
       println(s"Loading data took ${dataLoadTime} secs")
 
 
       val convTrainBegin = System.nanoTime
       XTrain = featurizer(data.train)
-      val count = XTrain.count()
       val convTrainTime = timeElapsed(convTrainBegin)
       println(s"Generating train features took ${convTrainTime} secs")
 
       val convTestBegin = System.nanoTime
       XTest = featurizer(data.test)
-      XTest.count()
       val convTestTime = timeElapsed(convTestBegin)
       println(s"Generating test features took ${convTestTime} secs")
 
       val numFeatures = XTrain.take(1)(0).size
-      println(s"numFeatures: ${numFeatures}, count: ${count}, blockSize: ${blockSize}")
+      println(s"numFeatures: ${numFeatures}, blockSize: ${blockSize}")
 
 
-//      if (conf.saveFeatures) {
-//        if (!Files.exists(Paths.get(featureLocation_train))) {
-//          println(s"Saving Features, ${feature_id}")
-//          val saveTrain: RDD[SaveableVector] = XTrain.zip(LabelExtractor(data.train)).map(r => SaveableVector(r._1, r._2))
-//          val saveTest: RDD[SaveableVector] = XTest.zip(LabelExtractor(data.test)).map(r => SaveableVector(r._1, r._2))
-//          saveTrain.saveAsObjectFile(featureLocationPrefix + s"ckn_${feature_id}_train_features")
-//          saveTest.saveAsObjectFile(featureLocationPrefix + s"ckn_${feature_id}_test_features")
-//        } else {
-//          println("feature files already saved")
-//        }
-//
-//      }
+      if (conf.saveFeatures) {
+        if (!Files.exists(Paths.get(featureLocation_train))) {
+          println(s"Saving Features, ${feature_id}")
+          val saveTrain: RDD[SaveableVector] = XTrain.zip(LabelExtractor(data.train)).map(r => SaveableVector(r._1, r._2))
+          val saveTest: RDD[SaveableVector] = XTest.zip(LabelExtractor(data.test)).map(r => SaveableVector(r._1, r._2))
+          saveTrain.saveAsObjectFile(featureLocationPrefix + s"ckn_${feature_id}_train_features")
+          saveTest.saveAsObjectFile(featureLocationPrefix + s"ckn_${feature_id}_test_features")
+        } else {
+          println("feature files already saved")
+        }
+
+      }
 
       yTrain = data.train.map(r => DenseVector(r.label))
       yTest = data.test.map(r => DenseVector(r.label))
@@ -235,16 +234,9 @@ object SequenceCKM extends Serializable {
     }
 
 
-
     println(s"${yTrain.count} train points, ${yTest.count} test points")
 
     if (conf.solve) {
-      println(XTrain.count, yTrain.count)
-      val x = XTrain.first
-      val y = yTrain.first
-
-      val x1 = XTest.first
-      val y1 = yTest.first
 
       val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
       val trainPredictions: RDD[DenseVector[Double]] = model.apply(XTrain).cache()
@@ -254,12 +246,6 @@ object SequenceCKM extends Serializable {
       val testP = testPredictions.first
 
       assert(trainPredictions.first.length == 1)
-
-      // assert data sizes are the same
-      println(trainPredictions.count,data.train.count)
-      println(testPredictions.count,data.test.count)
-      assert(trainPredictions.count == data.train.count)
-      assert(testPredictions.count  == data.test.count)
 
       if (conf.numClasses == 1) {
         // compute train error
@@ -341,7 +327,6 @@ object SequenceCKM extends Serializable {
       s"\n log correlation: ${logCorrelation} " +
       s"\n Spearman Correlation: ${spearmanCorrelation} " +
       s"\n MSE: ${mse}")
-
   }
 
 
@@ -352,7 +337,7 @@ object SequenceCKM extends Serializable {
     val testfilename = dataset + "test"
     val filePath =
     if (cluster)
-      "/home/eecs/akmorrow/compbio294/ckm/keystone_pipeline/compbio/SEQUENCE_INPUT"
+      "/home/eecs/akmorrow/compbio294/ckm/keystone_pipeline/compbio"
     else {
       if (dataset == "sample_CHIPSEQ")
         "/Users/akmorrow/Documents/COMPBIO294/Project/TFData"
@@ -444,11 +429,18 @@ object SequenceCKM extends Serializable {
     if (args.size < 1) {
       println("Incorrect number of arguments...Exiting now.")
     } else {
-      val configfile = scala.io.Source.fromFile(args(0))
-      val configtext = try configfile.mkString finally configfile.close()
-      println(configtext)
+      val url = "hdfs://amp-bdg-master.amplab.net:8020/user/akmorrow/sample_CHIPSEQ.exp"
+      val path: Path = new Path(url)
+      var fs: FileSystem = path.getFileSystem(new Configuration())
+      var homedir = fs.getHomeDirectory.toString
+      println(homedir)
+      val configfile = fs.open(new Path("sample_CHIPSEQ.exp"))
+
+
+//      val configtext = try configfile.mkString finally configfile.close()
       val yaml = new Yaml(new Constructor(classOf[CKMConf]))
-      val appConfig = yaml.load(configtext).asInstanceOf[CKMConf]
+      val appConfig = yaml.load(configfile).asInstanceOf[CKMConf]
+//      val appConfig = yaml.load(configtext).asInstanceOf[CKMConf]
       val conf = new SparkConf().setAppName(appConfig.expid)
       Logger.getLogger("org").setLevel(Level.WARN)
       Logger.getLogger("akka").setLevel(Level.WARN)
@@ -457,9 +449,20 @@ object SequenceCKM extends Serializable {
       conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
       sc.setCheckpointDir(appConfig.checkpointDir)
-
+      val path2: Path = new Path("sample_CHIPSEQ.exp")
+      fs = path2.getFileSystem(sc.hadoopConfiguration)
+      homedir = fs.getHomeDirectory.toString
       run(sc, appConfig)
       sc.stop()
+    }
+  }
+
+  def getListOfFiles(dir: String):List[File] = {
+    val d = new File(dir)
+    if (d.exists && d.isDirectory) {
+      d.listFiles.filter(_.isFile).toList
+    } else {
+      List[File]()
     }
   }
 }

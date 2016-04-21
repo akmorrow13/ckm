@@ -27,6 +27,7 @@ class DREAM5TFReader(sc: SparkContext, location: String, fileName: String, sampl
   val lines = sc.textFile(loc)
 
 
+
   var X = lines.map(_.split("\t"))
   if (sample) {
     X = X.sample(false, 0.01)
@@ -79,7 +80,7 @@ object DREAM5Loader {
         labeled
       }
     println(s"loaded ${dataset}")
-    sc.parallelize(rdd.take(10))
+    rdd
   }
 }
 
