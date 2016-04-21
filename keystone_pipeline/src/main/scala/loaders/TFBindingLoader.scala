@@ -47,8 +47,8 @@ object DREAM5Loader {
 
   def apply(sc: SparkContext, path: String, partitions: Int, dataset: String, filename: String, sample: Boolean = false): RDD[LabeledSequence] = {
 
-    val fileLocation = s"/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data/SEQUENCE_INPUT/${filename}"
-
+    val fileLocation = s"${path}/SEQUENCE_INPUT/${filename}"
+    println(fileLocation)
     val f = Paths.get(fileLocation)
 
     val rdd: RDD[LabeledSequence] =

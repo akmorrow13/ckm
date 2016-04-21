@@ -66,14 +66,14 @@ object SequenceCKM extends Serializable {
   }
 
 
-  def run(sc: SparkContext, conf: CKMConf) {
+  def run(sc: SparkContext, conf: CKMConf, homeDir: String) {
 
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
-    val data: SequenceDataset = loadData(sc, conf.dataset, conf.cluster)
+    val data: SequenceDataset = loadData(sc, conf.dataset, homeDir)
     // load in features if they were already saved
     val featureLocationPrefix =
       if (conf.cluster) {
-        "/home/eecs/akmorrow/compbio294/ckm/keystone_pipeline/compbio/FEATURE_OUTPUT/"
+       homeDir + "/FEATURE_OUTPUT/"
       } else {
         if (conf.getDataset == "sample_CHIPSEQ")
           "/Users/akmorrow/Documents/COMPBIO294/Project/TFData/FEATURE_OUTPUT/"
@@ -224,8 +224,8 @@ object SequenceCKM extends Serializable {
       yTrain = data.train.map(r => DenseVector(r.label))
       yTest = data.test.map(r => DenseVector(r.label))
 
-      val avgEigenValue = (XTrain.map((x: DenseVector[Double]) => mean(x :* x)).sum() / (1.0 * count))
-      println(s"Average EigenValue : ${avgEigenValue}")
+//      val avgEigenValue = (XTrain.map((x: DenseVector[Double]) => mean(x :* x)).sum() / (1.0 * count))
+//      println(s"Average EigenValue : ${avgEigenValue}")
     } else { // end loading features
         XTrain = sc.objectFile[SaveableVector](featureLocation_train).map(_.sequence)
         XTest =  sc.objectFile[SaveableVector](featureLocation_test).map(_.sequence)
@@ -331,19 +331,11 @@ object SequenceCKM extends Serializable {
 
 
 
-  def loadData(sc: SparkContext, dataset: String, cluster: Boolean): SequenceDataset = {
+  def loadData(sc: SparkContext, dataset: String, filePath: String): SequenceDataset = {
 
     val trainfilename = dataset + "train"
     val testfilename = dataset + "test"
-    val filePath =
-    if (cluster)
-      "/home/eecs/akmorrow/compbio294/ckm/keystone_pipeline/compbio"
-    else {
-      if (dataset == "sample_CHIPSEQ")
-        "/Users/akmorrow/Documents/COMPBIO294/Project/TFData"
-      else
-        "/Users/akmorrow/Documents/COMPBIO294/Project/DREAM_data"
-    }
+
     val (train, test) =
       if (dataset == "sample_DREAM5") {
         val train: RDD[LabeledSequence] = DREAM5Loader(sc, filePath, 10, "train", trainfilename).cache
@@ -429,18 +421,20 @@ object SequenceCKM extends Serializable {
     if (args.size < 1) {
       println("Incorrect number of arguments...Exiting now.")
     } else {
-      val url = "hdfs://amp-bdg-master.amplab.net:8020/user/akmorrow/sample_CHIPSEQ.exp"
+      val cluster = false
+      val url =
+        if (cluster)
+          "hdfs://amp-bdg-master.amplab.net:8020/user/akmorrow/"
+        else
+          "/Users/akmorrow/Documents/COMPBIO294/Project/ckm/"
       val path: Path = new Path(url)
       var fs: FileSystem = path.getFileSystem(new Configuration())
       var homedir = fs.getHomeDirectory.toString
       println(homedir)
       val configfile = fs.open(new Path("sample_CHIPSEQ.exp"))
 
-
-//      val configtext = try configfile.mkString finally configfile.close()
       val yaml = new Yaml(new Constructor(classOf[CKMConf]))
       val appConfig = yaml.load(configfile).asInstanceOf[CKMConf]
-//      val appConfig = yaml.load(configtext).asInstanceOf[CKMConf]
       val conf = new SparkConf().setAppName(appConfig.expid)
       Logger.getLogger("org").setLevel(Level.WARN)
       Logger.getLogger("akka").setLevel(Level.WARN)
@@ -452,7 +446,8 @@ object SequenceCKM extends Serializable {
       val path2: Path = new Path("sample_CHIPSEQ.exp")
       fs = path2.getFileSystem(sc.hadoopConfiguration)
       homedir = fs.getHomeDirectory.toString
-      run(sc, appConfig)
+      println(homedir)
+      run(sc, appConfig, homedir)
       sc.stop()
     }
   }
