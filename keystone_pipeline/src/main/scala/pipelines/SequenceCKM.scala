@@ -233,9 +233,10 @@ object SequenceCKM extends Serializable {
 
     if (conf.solve) {
 
-      val model = new BlockWeightedLeastSquaresEstimator(blockSize, conf.numIters, conf.reg, conf.solverWeight).fit(XTrain, yTrain)
+      val model = new BlockLeastSquaresEstimator(blockSize, conf.numIters, conf.reg).fit(XTrain, yTrain)
       val trainPredictions: RDD[DenseVector[Double]] = model.apply(XTrain).cache()
       val testPredictions: RDD[DenseVector[Double]] =  model.apply(XTest).cache()
+      println(trainPredictions.first)
 
       val trainLabels = yTrain.map(r => r(0).toInt)
       val testLabels = yTest.map(r => r(0).toInt)
@@ -423,6 +424,7 @@ object SequenceCKM extends Serializable {
       Logger.getLogger("akka").setLevel(Level.WARN)
       conf.setIfMissing("spark.master", "local[16]")
       conf.set("spark.driver.maxResultSize", "0")
+      conf.set("spark.kryoserializer.buffer.max", "2G")
       conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
       sc.setCheckpointDir(appConfig.checkpointDir)
