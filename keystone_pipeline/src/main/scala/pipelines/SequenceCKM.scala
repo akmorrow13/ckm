@@ -247,11 +247,35 @@ object SequenceCKM extends Serializable {
       } else {
         val rdd = XTrain.zip(trainLabels).map(r => LabeledPoint(r._2.toDouble, Vectors.dense(r._1.toArray)))
         rdd.cache
-        val numIterations = 100
-        val stepSize = 0.0001
-        val model = LinearRegressionWithSGD.train(rdd, numIterations, stepSize)
-        trainPredictions = XTrain.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
-        testPredictions = XTest.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
+        val numIterations = List(100, 1000, 10000, 100000, 1000000)
+        val stepSize = List(0.0001, 0.001, 0.01, 0.1, 1.0, 10.0)
+
+        for (i <- numIterations) {
+          for (j <- stepSize) {
+            println(s"iterations: ${i}}, stepSize: ${j}")
+            val model = LinearRegressionWithSGD.train(rdd, i, j)
+            trainPredictions = XTrain.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
+            testPredictions = XTest.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
+            if (conf.numClasses == 1) {
+              // compute train error
+              computeCorrelation(trainPredictions.map(r => r(0)), yTrain.map(r => r(0)))
+
+              // compute test error
+              computeCorrelation(testPredictions.map(r => r(0)), yTest.map(r => r(0)))
+            } else {
+              val yTrainPred = MaxClassifier.apply(trainPredictions)
+              val yTestPred =  MaxClassifier.apply(testPredictions)
+              val trainEval = MulticlassClassifierEvaluator(yTrainPred, trainLabels, conf.numClasses)
+              val testEval = MulticlassClassifierEvaluator(yTestPred, testLabels, conf.numClasses)
+
+              // comput AUROC
+              // TODO: what to put in here
+              computeAUROC(trainPredictions.map(r => r(0)), yTrain.map(r => r(0)))
+              computeAUROC(testPredictions.map(r => r(0)), yTest.map(r => r(0)))
+            }
+          }
+        }
+
       }
 
       if (conf.numClasses == 1) {
@@ -289,7 +313,6 @@ object SequenceCKM extends Serializable {
 
   def computeAUROC(x: RDD[Double], y: RDD[Double]) = {
     val zipped = x.zip(y)
-    zipped.collect.foreach(println)
     val metrics = new BinaryClassificationMetrics(zipped)
     val auROC = metrics.areaUnderROC()
 
