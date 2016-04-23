@@ -50,7 +50,6 @@ object DREAM5Loader {
     val rdd: RDD[LabeledSequence] =
       if (fs.exists(new Path(fileLocation))) {
         // load from files
-        // TODO: Alyssa read all files in folder
         val data = sc.objectFile[SaveableArray](fileLocation)
         data.map(r => LabeledSequence(RowMajorArrayVectorizedSequence(r.sequence, r.metadata), r.label))
 
@@ -76,6 +75,7 @@ object DREAM5Loader {
         labeled
       }
     println(s"loaded ${dataset}")
+    println(rdd.count)
     rdd
   }
 }

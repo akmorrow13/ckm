@@ -17,6 +17,8 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
+import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.mllib.regression.{LabeledPoint, LinearRegressionWithSGD}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkConf, SparkContext}
 import utils._
@@ -69,7 +71,7 @@ object SequenceCKM extends Serializable {
   def run(sc: SparkContext, conf: CKMConf, fs: FileSystem) {
 
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
-    val data: SequenceDataset = loadData(sc, conf.dataset, fs)
+    val data: SequenceDataset = loadData(sc, conf.dataset, fs, conf.sample)
     // load in features if they were already saved
     val featureLocationPrefix = "FEATURE_OUTPUT/"
 
@@ -228,18 +230,29 @@ object SequenceCKM extends Serializable {
       println(XTrain.count, XTest.count, yTrain.count, yTest.count)
     }
 
+    val trainLabels = yTrain.map(r => r(0).toInt)
+    val testLabels = yTest.map(r => r(0).toInt)
 
     println(s"${yTrain.count} train points, ${yTest.count} test points")
 
+    var trainPredictions: RDD[DenseVector[Double]] = null
+    var testPredictions: RDD[DenseVector[Double]] =  null
+
     if (conf.solve) {
-
-      val model = new BlockLeastSquaresEstimator(blockSize, conf.numIters, conf.reg).fit(XTrain, yTrain)
-      val trainPredictions: RDD[DenseVector[Double]] = model.apply(XTrain).cache()
-      val testPredictions: RDD[DenseVector[Double]] =  model.apply(XTest).cache()
-      println(trainPredictions.first)
-
-      val trainLabels = yTrain.map(r => r(0).toInt)
-      val testLabels = yTest.map(r => r(0).toInt)
+      if (conf.leastSquaresSolver) {
+        val model = new BlockLeastSquaresEstimator(blockSize, conf.numIters, conf.reg).fit(XTrain, yTrain)
+        trainPredictions = model.apply(XTrain).cache()
+        testPredictions =  model.apply(XTest).cache()
+        println(trainPredictions.first)
+      } else {
+        val rdd = XTrain.zip(trainLabels).map(r => LabeledPoint(r._2.toDouble, Vectors.dense(r._1.toArray)))
+        rdd.cache
+        val numIterations = 100
+        val stepSize = 0.0001
+        val model = LinearRegressionWithSGD.train(rdd, numIterations, stepSize)
+        trainPredictions = XTrain.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
+        testPredictions = XTest.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
+      }
 
       if (conf.numClasses == 1) {
         // compute train error
@@ -314,23 +327,19 @@ object SequenceCKM extends Serializable {
 
 
 
-  def loadData(sc: SparkContext, dataset: String, fs: FileSystem): SequenceDataset = {
+  def loadData(sc: SparkContext, dataset: String, fs: FileSystem, sample: Boolean): SequenceDataset = {
 
     val trainfilename = dataset + "train"
     val testfilename = dataset + "test"
 
     val (train, test) =
       if (dataset == "sample_DREAM5") {
-        val train: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "train", trainfilename).cache
-        val test: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "test", testfilename).cache
-        (train, test)
-      } else if (dataset == "small_DREAM5") {
-        val train: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "train", trainfilename, sample = true).cache
-        val test: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "test", testfilename, sample = true).cache
+        val train: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "train", trainfilename, sample).cache
+        val test: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "test", testfilename, sample).cache
         (train, test)
       } else if (dataset == "sample_CHIPSEQ") {
-        val train: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "train", trainfilename, sample = true).cache
-        val test: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "test", testfilename, sample = true).cache
+        val train: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "train", trainfilename, sample).cache
+        val test: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "test", testfilename, sample).cache
         println(train.first)
         (train, test)
       }else {
@@ -389,7 +398,9 @@ object SequenceCKM extends Serializable {
     @BeanProperty var  augmentType: String = "random"
     @BeanProperty var  fastfood: Boolean = false
     @BeanProperty var  cluster: Boolean = false
-  }
+    @BeanProperty var  leastSquaresSolver: Boolean = true
+    @BeanProperty var  sample: Boolean = false
+   }
 
   case class SequenceDataset(
                       val train: RDD[LabeledSequence],
@@ -401,7 +412,6 @@ object SequenceCKM extends Serializable {
    * @param args
    */
   def main(args: Array[String]) = {
-
     if (args.size < 1) {
       println("Incorrect number of arguments...Exiting now.")
     } else {
@@ -415,7 +425,7 @@ object SequenceCKM extends Serializable {
       val fs: FileSystem = path.getFileSystem(new Configuration())
       val homedir = fs.getHomeDirectory.toString
       println(homedir)
-      val configfile= fs.open(new Path("sample_CHIPSEQ.exp"))
+      val configfile= fs.open(new Path(args(0)))
 
       val yaml = new Yaml(new Constructor(classOf[CKMConf]))
       val appConfig = yaml.load(configfile).asInstanceOf[CKMConf]
