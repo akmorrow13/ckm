@@ -38,7 +38,6 @@ class SequenceCC(
   extends Transformer[Sequence, Sequence] {
 
   val convSize = (numInputFeatures/imgChannels).toInt // TODO: Alyssa removed Math.sqrt
-  assert(convSize == 5)
 
   val resWidth = width - convSize + 1
 //  val resHeight =  width - convSize + 1

@@ -247,34 +247,31 @@ object SequenceCKM extends Serializable {
       } else {
         val rdd = XTrain.zip(trainLabels).map(r => LabeledPoint(r._2.toDouble, Vectors.dense(r._1.toArray)))
         rdd.cache
-        val numIterations = List(100, 1000, 10000, 100000, 1000000)
-        val stepSize = List(0.0001, 0.001, 0.01, 0.1, 1.0, 10.0)
+        val numIterations = 100
+        val stepSize = 0.01
 
-        for (i <- numIterations) {
-          for (j <- stepSize) {
-            println(s"iterations: ${i}}, stepSize: ${j}")
-            val model = LinearRegressionWithSGD.train(rdd, i, j)
-            trainPredictions = XTrain.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
-            testPredictions = XTest.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
-            if (conf.numClasses == 1) {
-              // compute train error
-              computeCorrelation(trainPredictions.map(r => r(0)), yTrain.map(r => r(0)))
+        println(s"iterations: ${numIterations}}, stepSize: ${stepSize}")
+        val model = LinearRegressionWithSGD.train(rdd, numIterations, stepSize)
+        trainPredictions = XTrain.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
+        testPredictions = XTest.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
+        if (conf.numClasses == 1) {
+          // compute train error
+          computeCorrelation(trainPredictions.map(r => r(0)), yTrain.map(r => r(0)))
 
-              // compute test error
-              computeCorrelation(testPredictions.map(r => r(0)), yTest.map(r => r(0)))
-            } else {
-              val yTrainPred = MaxClassifier.apply(trainPredictions)
-              val yTestPred =  MaxClassifier.apply(testPredictions)
-              val trainEval = MulticlassClassifierEvaluator(yTrainPred, trainLabels, conf.numClasses)
-              val testEval = MulticlassClassifierEvaluator(yTestPred, testLabels, conf.numClasses)
+          // compute test error
+          computeCorrelation(testPredictions.map(r => r(0)), yTest.map(r => r(0)))
+        } else {
+          val yTrainPred = MaxClassifier.apply(trainPredictions)
+          val yTestPred =  MaxClassifier.apply(testPredictions)
+          val trainEval = MulticlassClassifierEvaluator(yTrainPred, trainLabels, conf.numClasses)
+          val testEval = MulticlassClassifierEvaluator(yTestPred, testLabels, conf.numClasses)
 
-              // comput AUROC
-              // TODO: what to put in here
-              computeAUROC(trainPredictions.map(r => r(0)), yTrain.map(r => r(0)))
-              computeAUROC(testPredictions.map(r => r(0)), yTest.map(r => r(0)))
-            }
-          }
+          // comput AUROC
+          // TODO: what to put in here
+          computeAUROC(trainPredictions.map(r => r(0)), yTrain.map(r => r(0)))
+          computeAUROC(testPredictions.map(r => r(0)), yTest.map(r => r(0)))
         }
+
 
       }
 
@@ -322,7 +319,6 @@ object SequenceCKM extends Serializable {
   def computeCorrelation(x: RDD[Double], y: RDD[Double]): Unit = {
 
     val zipped = x.zip(y)
-    zipped.take(10).foreach(println)
 
     // Calculate MSE
     val mse: Double = zipped.map{ case (v1, v2) =>
@@ -451,7 +447,7 @@ object SequenceCKM extends Serializable {
       val configfile= fs.open(new Path(args(0)))
 
       val yaml = new Yaml(new Constructor(classOf[CKMConf]))
-      val appConfig = yaml.load(configfile).asInstanceOf[CKMConf]
+      var appConfig = yaml.load(configfile).asInstanceOf[CKMConf]
       val conf = new SparkConf().setAppName(appConfig.expid)
       Logger.getLogger("org").setLevel(Level.WARN)
       Logger.getLogger("akka").setLevel(Level.WARN)
@@ -460,8 +456,28 @@ object SequenceCKM extends Serializable {
       conf.set("spark.kryoserializer.buffer.max", "2G")
       conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
+      // filter size, patch size, bandwidth
+      val filters = List(20, 40, 100, 200)
+      val patchSize = List(2, 5, 7, 11)
+      val bandwidth = List(0.8, 1.0, 1.5, 1.8)
       sc.setCheckpointDir(appConfig.checkpointDir)
-      run(sc, appConfig, fs)
+
+      for (i <- filters) {
+        appConfig.setFilters(Array(i))
+        for (j <- patchSize) {
+          appConfig.setPatch_sizes(Array(j))
+          for (k <- bandwidth) {
+            appConfig.setBandwidth(Array(k))
+            println(s"filters " + i +" patchSize " + j + " bandwidth " + k)
+            run(sc, appConfig, fs)
+
+          }
+        }
+      }
+
+
+
+
       sc.stop()
     }
   }
