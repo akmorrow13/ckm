@@ -112,14 +112,13 @@ object SequenceCKM extends Serializable {
           val baseFilters = patchExtractor(data.train.map(_.sequence))
           val baseFilterMat = MatrixUtils.rowsToMatrix(baseFilters)
           val whitener = new ZCAWhitenerEstimator(conf.whitenerValue).fitSingle(baseFilterMat)
-          val whitenedBase = whitener(baseFilterMat)
 
           val rows = whitener.whitener.rows
           val cols = whitener.whitener.cols
           println(s"Whitener Rows :${rows}, Cols: ${cols}")
 
           numOutputFeatures = conf.filters(0)
-          val patchSize = math.pow(conf.patch_sizes(0), 2).toInt
+          val patchSize = conf.patch_sizes(0)
           val seed = conf.seed
           val dimensions = conf.dimensions
           val ccap: SequenceCC = new SequenceCC(numInputFeatures * patchSize,
@@ -405,8 +404,8 @@ object SequenceCKM extends Serializable {
     @BeanProperty var  solver: String = "kernel"
     @BeanProperty var  insanity: Boolean = false
     @BeanProperty var  saveFeatures: Boolean = false
-    @BeanProperty var  pool: Array[Int] = Array(2)
-    @BeanProperty var  poolStride: Array[Int] = Array(2)
+    @BeanProperty var  pool: Array[Int] = Array(2,2)
+    @BeanProperty var  poolStride: Array[Int] = Array(2,2)
     @BeanProperty var  checkpointDir: String = "/tmp/spark-checkpoint"
     @BeanProperty var  augment: Boolean = false
     @BeanProperty var  augmentPatchSize: Int = 24
@@ -453,6 +452,11 @@ object SequenceCKM extends Serializable {
       conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
       sc.setCheckpointDir(appConfig.checkpointDir)
+//      appConfig.setWhiten(true)
+//      println("Whitening = true")
+//      run(sc, appConfig, fs)
+      appConfig.setWhiten(true)
+      println("Whitening = false")
       run(sc, appConfig, fs)
       sc.stop()
     }
