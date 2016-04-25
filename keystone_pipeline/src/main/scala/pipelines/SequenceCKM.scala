@@ -91,10 +91,6 @@ object SequenceCKM extends Serializable {
 
     if (!fs.exists(new Path(featureLocation_train))) {
 
-      // Compute bandwidth
-//      val median = SequenceCKM.samplePairwiseMedian(data.train.map(_.sequence), conf.patch_sizes(0))
-//      val bandwidth = 1 / (2 * Math.pow(median, 2))
-      val bandwidth = 1
       var convKernel: Pipeline[Sequence, Sequence] = new Identity()
       implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
       val gaussian = new Gaussian(0, 1)
@@ -129,7 +125,7 @@ object SequenceCKM extends Serializable {
           val ccap: SequenceCC = new SequenceCC(numInputFeatures * patchSize,
             numOutputFeatures,
             seed,
-            bandwidth,
+            conf.bandwidth(0),
             currX,
             numInputFeatures,
             Some(whitener),
@@ -159,7 +155,7 @@ object SequenceCKM extends Serializable {
         val seed = conf.seed + i
         val ccap = new SequenceCC(numInputFeatures * patchSize,
           numOutputFeatures,
-          seed, bandwidth, currX, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity, conf.fastfood)
+          seed, conf.bandwidth(i), currX, numInputFeatures, None, conf.whitenerOffset, conf.pool(i), conf.insanity, conf.fastfood)
 
         if (conf.pool(i) > 1) {
           var pooler = new SequencePooler(conf.poolStride(i), conf.pool(i), identity, (x: DenseVector[Double]) => mean(x))
@@ -456,28 +452,8 @@ object SequenceCKM extends Serializable {
       conf.set("spark.kryoserializer.buffer.max", "2G")
       conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
-      // filter size, patch size, bandwidth
-      val filters = List(20, 40, 100, 200)
-      val patchSize = List(2, 5, 7, 11)
-      val bandwidth = List(0.8, 1.0, 1.5, 1.8)
       sc.setCheckpointDir(appConfig.checkpointDir)
-
-      for (i <- filters) {
-        appConfig.setFilters(Array(i))
-        for (j <- patchSize) {
-          appConfig.setPatch_sizes(Array(j))
-          for (k <- bandwidth) {
-            appConfig.setBandwidth(Array(k))
-            println(s"filters " + i +" patchSize " + j + " bandwidth " + k)
-            run(sc, appConfig, fs)
-
-          }
-        }
-      }
-
-
-
-
+      run(sc, appConfig, fs)
       sc.stop()
     }
   }
