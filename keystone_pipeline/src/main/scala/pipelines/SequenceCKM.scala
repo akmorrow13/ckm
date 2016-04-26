@@ -90,6 +90,7 @@ object SequenceCKM extends Serializable {
     val blockSize = conf.blockSize
 
     if (!fs.exists(new Path(featureLocation_train))) {
+      val bw = 1/samplePairwiseMedian(data.train.map(_.sequence), conf.patch_sizes(0))
 
       var convKernel: Pipeline[Sequence, Sequence] = new Identity()
       implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
@@ -452,12 +453,28 @@ object SequenceCKM extends Serializable {
       conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
       sc.setCheckpointDir(appConfig.checkpointDir)
-//      appConfig.setWhiten(true)
-//      println("Whitening = true")
-//      run(sc, appConfig, fs)
+      val bw = List(1.0,1.2,1.3,1.4,1.5)
+      val patch = List(2,3,5,7,8,11)
+      val filters = List(10, 20, 40, 100)
+      val pools = List(1,2,3,4)
       appConfig.setWhiten(true)
-      println("Whitening = false")
-      run(sc, appConfig, fs)
+
+      for (b <- bw) {
+        appConfig.setBandwidth(Array(b))
+        for (p <- patch) {
+          appConfig.setPatch_sizes(Array(p))
+          for (f <- filters) {
+            appConfig.setFilters(Array(f))
+            for (pool <- pools) {
+              appConfig.setPool(Array(pool))
+              println(s"bw ${b} patchsize ${p} filters ${f} pool ${pool}")
+              run(sc, appConfig, fs)
+            }
+          }
+        }
+      }
+
+
       sc.stop()
     }
   }
