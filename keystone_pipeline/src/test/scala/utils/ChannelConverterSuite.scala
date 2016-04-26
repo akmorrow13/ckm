@@ -8,7 +8,7 @@ class ChannelConverterSuite extends FunSuite {
 
     val sequence = "ATGG"
 
-    val result: DenseVector[Double] = ChannelConverter(sequence)
+    val result: DenseVector[Double] = ChannelConverter(sequence, None)
 
     assert(result(0) == 0.25)
     assert(result(8) == 1.0)

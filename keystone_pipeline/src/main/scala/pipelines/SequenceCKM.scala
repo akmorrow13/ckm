@@ -14,7 +14,7 @@ import nodes.stats.{SeededCosineRandomFeatures, Sampler}
 import nodes.util._
 import org.apache.commons.math3.random.MersenneTwister
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.{LocatedFileStatus, RemoteIterator, FileSystem, Path}
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
 import org.apache.spark.mllib.linalg.Vectors
@@ -68,10 +68,10 @@ object SequenceCKM extends Serializable {
   }
 
 
-  def run(sc: SparkContext, conf: CKMConf, fs: FileSystem) {
+  def run(sc: SparkContext, conf: CKMConf, fs: FileSystem, fileName: Option[String] = None) {
 
     val feature_id = conf.seed + "_" + conf.expid  + "_" + conf.layers + "_" + conf.patch_sizes.mkString("-") + "_" + "_" + conf.pool.mkString("-") + "_" + conf.poolStride.mkString("-") + conf.filters.mkString("-")
-    val data: SequenceDataset = loadData(sc, conf.dataset, fs, conf.sample)
+    val data: SequenceDataset = loadData(sc, conf.dataset, fs, conf.sample, fileName)
     // load in features if they were already saved
     val featureLocationPrefix = "FEATURE_OUTPUT/"
 
@@ -90,7 +90,6 @@ object SequenceCKM extends Serializable {
     val blockSize = conf.blockSize
 
     if (!fs.exists(new Path(featureLocation_train))) {
-      val bw = 1/samplePairwiseMedian(data.train.map(_.sequence), conf.patch_sizes(0))
 
       var convKernel: Pipeline[Sequence, Sequence] = new Identity()
       implicit val randBasis: RandBasis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(conf.seed)))
@@ -100,12 +99,12 @@ object SequenceCKM extends Serializable {
 
 
       val (xDim, numChannels) = getInfo(data)
-      println(s"Info ${xDim}, ${numChannels}")
       var numInputFeatures = numChannels
       var currX = xDim
 
       val startLayer =
         if (conf.whiten) {
+          val bandwidth = conf.bandwidth(0)
           // Whiten top level
           val patchExtractor = new SequenceWindower(1, conf.patch_sizes(0))
             .andThen(SequenceVectorizer.apply)
@@ -116,7 +115,6 @@ object SequenceCKM extends Serializable {
 
           val rows = whitener.whitener.rows
           val cols = whitener.whitener.cols
-          println(s"Whitener Rows :${rows}, Cols: ${cols}")
 
           numOutputFeatures = conf.filters(0)
           val patchSize = conf.patch_sizes(0)
@@ -125,7 +123,7 @@ object SequenceCKM extends Serializable {
           val ccap: SequenceCC = new SequenceCC(numInputFeatures * patchSize,
             numOutputFeatures,
             seed,
-            conf.bandwidth(0),
+            bandwidth,
             currX,
             numInputFeatures,
             Some(whitener),
@@ -141,7 +139,6 @@ object SequenceCKM extends Serializable {
           }
           currX = math.ceil(((currX - conf.patch_sizes(0) + 1) - conf.pool(0) / 2.0) / conf.poolStride(0)).toInt
 
-          println(s"Layer 0 output, Width: ${currX}")
           numInputFeatures = numOutputFeatures
           1
         } else {
@@ -165,7 +162,6 @@ object SequenceCKM extends Serializable {
         }
 
         currX = math.ceil(((currX - conf.patch_sizes(i) + 1) - conf.pool(i) / 2.0) / conf.poolStride(i)).toInt
-        println(s"Layer ${i} output, Width: ${currX}")
         numInputFeatures = numOutputFeatures
       }
       val outFeatures = currX * numOutputFeatures
@@ -174,7 +170,6 @@ object SequenceCKM extends Serializable {
       val featurizer1 = SequenceExtractor andThen convKernel
       val featurizer2 = SequenceVectorizer andThen new Cacher[DenseVector[Double]]
 
-      println("OUT FEATURES " + outFeatures)
       var featurizer = featurizer1 andThen featurizer2
       if (conf.cosineSolver) {
         val randomFeatures = SeededCosineRandomFeatures(outFeatures, conf.cosineFeatures, conf.cosineGamma, 24) andThen new Cacher[DenseVector[Double]]
@@ -223,13 +218,11 @@ object SequenceCKM extends Serializable {
         XTest =  sc.objectFile[SaveableVector](featureLocation_test).map(_.sequence)
         yTrain = sc.objectFile[SaveableVector](featureLocation_train).map(r => DenseVector(r.label))
         yTest = sc.objectFile[SaveableVector](featureLocation_test).map(r => DenseVector(r.label))
-      println(XTrain.count, XTest.count, yTrain.count, yTest.count)
     }
 
     val trainLabels = yTrain.map(r => r(0).toInt)
     val testLabels = yTest.map(r => r(0).toInt)
 
-    println(s"${yTrain.count} train points, ${yTest.count} test points")
 
     var trainPredictions: RDD[DenseVector[Double]] = null
     var testPredictions: RDD[DenseVector[Double]] =  null
@@ -239,17 +232,17 @@ object SequenceCKM extends Serializable {
         val model = new BlockLeastSquaresEstimator(blockSize, conf.numIters, conf.reg).fit(XTrain, yTrain)
         trainPredictions = model.apply(XTrain).cache()
         testPredictions =  model.apply(XTest).cache()
-        println(trainPredictions.first)
       } else {
+
         val rdd = XTrain.zip(trainLabels).map(r => LabeledPoint(r._2.toDouble, Vectors.dense(r._1.toArray)))
         rdd.cache
         val numIterations = 100
         val stepSize = 0.01
-
-        println(s"iterations: ${numIterations}}, stepSize: ${stepSize}")
         val model = LinearRegressionWithSGD.train(rdd, numIterations, stepSize)
         trainPredictions = XTrain.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
         testPredictions = XTest.map(point => DenseVector(model.predict(Vectors.dense(point.toArray))))
+
+
         if (conf.numClasses == 1) {
           // compute train error
           computeCorrelation(trainPredictions.map(r => r(0)), yTrain.map(r => r(0)))
@@ -259,6 +252,7 @@ object SequenceCKM extends Serializable {
         } else {
           val yTrainPred = MaxClassifier.apply(trainPredictions)
           val yTestPred =  MaxClassifier.apply(testPredictions)
+          println(yTrainPred.count, trainLabels.count)
           val trainEval = MulticlassClassifierEvaluator(yTrainPred, trainLabels, conf.numClasses)
           val testEval = MulticlassClassifierEvaluator(yTestPred, testLabels, conf.numClasses)
 
@@ -271,35 +265,17 @@ object SequenceCKM extends Serializable {
 
       }
 
-      if (conf.numClasses == 1) {
-        // compute train error
-        computeCorrelation(trainPredictions.map(r => r(0)), yTrain.map(r => r(0)))
 
-        // compute test error
-        computeCorrelation(testPredictions.map(r => r(0)), yTest.map(r => r(0)))
-      } else {
-        val yTrainPred = MaxClassifier.apply(trainPredictions)
-        val yTestPred =  MaxClassifier.apply(testPredictions)
-        val trainEval = MulticlassClassifierEvaluator(yTrainPred, trainLabels, conf.numClasses)
-        val testEval = MulticlassClassifierEvaluator(yTestPred, testLabels, conf.numClasses)
-
-        // comput AUROC
-        // TODO: what to put in here
-        computeAUROC(trainPredictions.map(r => r(0)), yTrain.map(r => r(0)))
-        computeAUROC(testPredictions.map(r => r(0)), yTest.map(r => r(0)))
-      }
-
-
-      val out_train = s"ckm_train_results_Filters_${conf.filters(0)}_${conf.dataset}"
-      val out_test = s"ckm_test_results_Filters_${conf.filters(0)}_${conf.dataset}"
-
-      trainPredictions.zip(trainLabels).map {
-        case (weights, label) => s"$label," + weights.toArray.mkString(",")
-      }.saveAsTextFile(out_train)
-
-      testPredictions.zip(testLabels).map {
-        case (weights, label) => s"$label," + weights.toArray.mkString(",")
-      }.saveAsTextFile(out_test)
+//      val out_train = s"ckm_train_results_Filters_${conf.filters(0)}_${conf.dataset}"
+//      val out_test = s"ckm_test_results_Filters_${conf.filters(0)}_${conf.dataset}"
+//
+//      trainPredictions.zip(trainLabels).map {
+//        case (weights, label) => s"$label," + weights.toArray.mkString(",")
+//      }.saveAsTextFile(out_train)
+//
+//      testPredictions.zip(testLabels).map {
+//        case (weights, label) => s"$label," + weights.toArray.mkString(",")
+//      }.saveAsTextFile(out_test)
 
     }
   }
@@ -342,22 +318,34 @@ object SequenceCKM extends Serializable {
 
 
 
-  def loadData(sc: SparkContext, dataset: String, fs: FileSystem, sample: Boolean): SequenceDataset = {
+  def loadData(sc: SparkContext, dataset: String, fs: FileSystem, sample: Boolean, fileOpt: Option[String]): SequenceDataset = {
 
     val trainfilename = dataset + "train"
     val testfilename = dataset + "test"
 
     val (train, test) =
-      if (dataset == "sample_DREAM5") {
+      if (dataset == "sample_PBM") {
+        // for each file in pbm file
         val train: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "train", trainfilename, sample).cache
         val test: RDD[LabeledSequence] = DREAM5Loader(sc, fs, 10, "test", testfilename, sample).cache
         (train, test)
       } else if (dataset == "sample_CHIPSEQ") {
-        val train: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "train", trainfilename, sample).cache
-        val test: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "test", testfilename, sample).cache
+          val train: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "train", trainfilename, sample).cache
+          val test: RDD[LabeledSequence] = ChipSeqLoader(sc, fs, 10, "test", testfilename, sample).cache
+          (train, test)
+      } else if (dataset == "sample_DREAM5") {
+        // TODO: loop through all files
+        val fileName = fileOpt.get
+        var data: RDD[String] = sc.textFile(fileName)
+
+        val rdd = data.zipWithIndex()
+
+        val train: RDD[LabeledSequence] = ChipSeqLoader(sc, 10, rdd.filter(r => r._2 % 2 == 0).map(_._1)).cache
+        val test: RDD[LabeledSequence] = ChipSeqLoader(sc, 10, rdd.filter(r => r._2 % 2 != 0).map(_._1)).cache
+        println(train.first)
         println(train.first)
         (train, test)
-      }else {
+      } else {
         throw new IllegalArgumentException("Unknown Dataset")
       }
     println(s"training sample: ${train.first.sequence}, ${train.first.label}" )
@@ -453,38 +441,34 @@ object SequenceCKM extends Serializable {
       conf.setAppName(appConfig.expid)
       val sc = new SparkContext(conf)
       sc.setCheckpointDir(appConfig.checkpointDir)
-      val bw = List(1.0,1.2,1.3,1.4,1.5)
-      val patch = List(2,3,5,7,8,11)
-      val filters = List(10, 20, 40, 100)
-      val pools = List(1,2,3,4)
-      appConfig.setWhiten(true)
-
-      for (b <- bw) {
-        appConfig.setBandwidth(Array(b))
-        for (p <- patch) {
-          appConfig.setPatch_sizes(Array(p))
-          for (f <- filters) {
-            appConfig.setFilters(Array(f))
-            for (pool <- pools) {
-              appConfig.setPool(Array(pool))
-              println(s"bw ${b} patchsize ${p} filters ${f} pool ${pool}")
-              run(sc, appConfig, fs)
-            }
-          }
-        }
-      }
-
-
+      run(sc, appConfig, fs, None)
+//      val dir = "DREAM5/chipseq/"
+//      val iter = getListOfFiles(dir, fs)
+//      while (iter.hasNext()) {
+//        val file = iter.next().getPath.toString
+//        if (!file.contains("dinuc")) {
+//          println(file)
+//          try {
+//            run(sc, appConfig, fs, Some(file))
+//
+//          } catch {
+//            case e: Exception => {
+//              println(file + "issue here")
+//            }
+//          }
+//        }
+//      }
       sc.stop()
+
     }
   }
 
-  def getListOfFiles(dir: String):List[File] = {
-    val d = new File(dir)
-    if (d.exists && d.isDirectory) {
-      d.listFiles.filter(_.isFile).toList
-    } else {
-      List[File]()
-    }
+  def getListOfFiles(dir: String, fs: FileSystem): RemoteIterator[LocatedFileStatus] = {
+    val fileStatusListIterator: RemoteIterator[LocatedFileStatus] = fs.listFiles(
+      new Path(dir), true)
+//    while (fileStatusListIterator.hasNext()) {
+//      println("\"" + fileStatusListIterator.next().getPath.toString + "\",")
+//    }
+    fileStatusListIterator
   }
 }

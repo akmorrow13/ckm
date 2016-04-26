@@ -175,7 +175,6 @@ object SequenceCC {
           py = x
           val k = img.get(x+pox, chan)
           patchMat(py, px) = k
-
           chan+=1
         }
         x+=1

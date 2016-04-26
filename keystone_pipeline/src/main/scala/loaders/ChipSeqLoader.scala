@@ -31,8 +31,29 @@ class ChipSeqReader(sc: SparkContext, fileName: String, fs: FileSystem, sample: 
   var labels =    new ListBuffer[Double]()
   val lengthOpt: Option[Int] = Option(length)
   val test: Array[String] = X.first
-  val tf = X.map(r => (ChannelConverter(r(5)).toArray, r(4).toDouble))
+  val tf = X.map(r => (ChannelConverter(r(5), Some(1000)).toArray, r(4).toDouble))
 
+  def getRDD(): RDD[(Array[Double], Double)] = tf
+
+}
+
+class ChipSeqDREAM5Reader(lines: RDD[String]) {
+  // We hardcode this because these are properties of the MNIST dataset.
+  val nchan = 4 // A, T, G, C
+  val labelSize = 1
+
+  def getChannels = nchan
+
+
+  val X: RDD[Array[String]] = lines.map(_.split("\t"))
+  var sequences =    new ListBuffer[Array[Double]]()
+  var labels =    new ListBuffer[Double]()
+  val tf = X.map(r => (ChannelConverter(r(0), None).toArray, r(1).toDouble))
+
+  println(X.first.head)
+  val length = X.first.head.length
+
+  def getLength = length
   def getRDD(): RDD[(Array[Double], Double)] = tf
 
 }
@@ -77,6 +98,16 @@ object ChipSeqLoader {
       }
     println(s"loaded ${dataset}")
     rdd
+  }
+
+  def apply(sc: SparkContext, partitions: Int, data: RDD[String]): RDD[LabeledSequence] = {
+
+    val tfReader = new ChipSeqDREAM5Reader(data)
+    val rdd = tfReader.getRDD
+    rdd.persist
+    val l = tfReader.getLength
+    val chan = tfReader.getChannels
+    rdd.map(r => LabeledSequence(RowMajorArrayVectorizedSequence(r._1, SequenceMetadata(l, chan)), r._2))
   }
 }
 

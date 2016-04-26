@@ -33,7 +33,7 @@ class DREAM5TFReader(sc: SparkContext, fileName: String, fs: FileSystem, sample:
   var sequences =    new ListBuffer[Array[Double]]()
   var labels =    new ListBuffer[Double]()
 
-  val tf = X.map(r => (ChannelConverter(r(2)).toArray, r(3).toDouble))
+  val tf: RDD[(Array[Double], Double)] = X.map(r => (ChannelConverter(r(2), None).toArray, r(3).toDouble))
 
   def getRDD(): RDD[(Array[Double], Double)] = tf
 
